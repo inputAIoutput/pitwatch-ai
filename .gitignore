@@ -1,0 +1,60 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# Environments
+.env
+.env.local
+.venv
+venv/
+ENV/
+
+# Audio and telemetry data cache
+data/
+cache/
+*.wav
+*.mp3
+*.flac
+*.m4a
+*.ts
+*.raw
+
+# Model weights
+weights/
+models/*.bin
+models/*.onnx
+models/*.safetensors
+models/*.gguf
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
