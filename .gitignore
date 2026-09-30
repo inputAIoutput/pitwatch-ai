@@ -58,3 +58,11 @@ models/*.gguf
 # OS
 .DS_Store
 Thumbs.db
+
+# Agent & skill metadata (workspace level only)
+AGENTS.md
+CLAUDE.md
+CONTEXT.md
+docs/adr/
+docs/agents/
+docs/context/
