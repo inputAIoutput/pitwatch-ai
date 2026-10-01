@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 from pitwatch.models.frame import ReplayFrame, WeatherTick
 from pitwatch.state.driver import DriverState, LeaderboardEntry
@@ -111,3 +112,79 @@ class LiveSessionState:
 
     def get_leaderboard(self) -> List[LeaderboardEntry]:
         return self.leaderboard
+
+    def get_all_normalized_positions(self) -> List[dict]:
+        """Returns normalized positions and progress for all registered drivers ordered by race position."""
+        positions = []
+        if self.leaderboard:
+            for entry in self.leaderboard:
+                pos = self.get_normalized_position(entry.driver_number)
+                if pos is not None:
+                    positions.append(pos)
+        else:
+            for drv_num in sorted(self.drivers.keys()):
+                pos = self.get_normalized_position(drv_num)
+                if pos is not None:
+                    positions.append(pos)
+        return positions
+
+    def get_session_summary(self) -> dict:
+        """Returns high-level session status and driver metadata."""
+        drivers_meta = []
+        for entry in self.leaderboard:
+            drv = self.drivers.get(entry.driver_number)
+            drivers_meta.append({
+                "driver_number": entry.driver_number,
+                "driver_code": entry.driver_code,
+                "team_name": drv.team_name if drv else "Unknown",
+                "current_position": entry.position,
+                "current_compound": entry.current_compound,
+                "tyre_age_laps": entry.tyre_age_laps,
+            })
+        return {
+            "session_key": self.session_key,
+            "circuit_name": self.circuit_name,
+            "year": 2024,
+            "session_name": "Grand Prix",
+            "status": "active",
+            "current_session_time": self.current_session_time,
+            "total_drivers": len(self.drivers),
+            "drivers": drivers_meta,
+        }
+
+    def get_live_telemetry_snapshot(self) -> dict:
+        """Returns instantaneous snapshot of all vehicles with telemetry and coordinates."""
+        vehicles = []
+        for entry in self.leaderboard:
+            drv = self.drivers.get(entry.driver_number)
+            if not drv:
+                continue
+            norm_pos = self.get_normalized_position(entry.driver_number)
+            tel = drv.latest_telemetry
+            vehicles.append({
+                "driver_number": entry.driver_number,
+                "driver_code": entry.driver_code,
+                "team_name": drv.team_name,
+                "position": entry.position,
+                "speed": tel.speed if tel else 0,
+                "gear": tel.gear if tel else 0,
+                "throttle": tel.throttle if tel else 0,
+                "brake": tel.brake if tel else 0,
+                "drs": tel.drs if tel else 0,
+                "rpm": tel.rpm if tel else 0,
+                "x": norm_pos["x"] if norm_pos else 0.0,
+                "y": norm_pos["y"] if norm_pos else 0.0,
+                "progress": norm_pos["progress"] if norm_pos else 0.0,
+                "gap_to_leader": entry.gap_to_leader,
+                "interval_ahead": entry.interval_ahead,
+            })
+        return {
+            "session_key": self.session_key,
+            "session_time": self.current_session_time,
+            "timestamp": datetime.now(timezone.utc),
+            "track_temperature": self.weather.track_temperature if self.weather else None,
+            "air_temperature": self.weather.air_temperature if self.weather else None,
+            "rainfall": self.weather.rainfall if self.weather else 0,
+            "vehicles": vehicles,
+        }
+
