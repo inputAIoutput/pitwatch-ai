@@ -1,5 +1,11 @@
 import argparse
 import asyncio
+import sys
+from pathlib import Path
+
+# Ensure src directory is on sys.path for direct script execution
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from pitwatch.ingestion.replay import HistoricalReplaySource
 from pitwatch.ingestion.openf1_client import OpenF1Client
 
