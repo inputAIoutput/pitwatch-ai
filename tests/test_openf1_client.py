@@ -35,3 +35,24 @@ async def test_openf1_team_radio_endpoint(tmp_path: Path):
     assert len(result) == 1
     assert result[0]["driver_number"] == 44
     assert result[0]["recording_url"].endswith(".mp3")
+
+
+@pytest.mark.asyncio
+async def test_openf1_laps_endpoint(tmp_path: Path):
+    client = OpenF1Client(cache_dir=str(tmp_path))
+    fake_laps = [
+        {
+            "session_key": 9558,
+            "driver_number": 44,
+            "lap_number": 1,
+            "date_start": "2024-07-07T14:03:12.540000+00:00",
+            "lap_duration": 96.402,
+        }
+    ]
+    cache_file = tmp_path / "laps_driver_number-44_session_key-9558.json"
+    cache_file.write_text(json.dumps(fake_laps), encoding="utf-8")
+
+    result = await client.get_laps(session_key=9558, driver_number=44)
+    assert len(result) == 1
+    assert result[0]["lap_number"] == 1
+    assert result[0]["lap_duration"] == 96.402

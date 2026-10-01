@@ -59,3 +59,9 @@ class OpenF1Client:
 
     async def get_team_radio(self, session_key: int) -> List[Dict[str, Any]]:
         return await self._fetch_cached("team_radio", {"session_key": session_key})
+
+    async def get_laps(self, session_key: int, driver_number: Optional[int] = None) -> List[Dict[str, Any]]:
+        params: Dict[str, Any] = {"session_key": session_key}
+        if driver_number is not None:
+            params["driver_number"] = driver_number
+        return await self._fetch_cached("laps", params)

@@ -49,14 +49,24 @@ class HistoricalReplaySource(SessionSource):
         driver_number: Optional[int] = None,
         client: Optional[OpenF1Client] = None,
         time_step: float = 0.2,
+        start_lap: Optional[int] = None,
     ) -> "HistoricalReplaySource":
         client = client or OpenF1Client()
         weather_raw = await client.get_weather(session_key)
         locations_raw = await client.get_location(session_key, driver_number=driver_number)
         car_data_raw = await client.get_car_data(session_key, driver_number=driver_number)
         radio_raw = await client.get_team_radio(session_key)
+        laps_raw = await client.get_laps(session_key, driver_number=driver_number)
 
-        frames = cls._build_frames(weather_raw, locations_raw, car_data_raw, radio_raw, time_step)
+        frames = cls._build_frames(
+            weather_data=weather_raw,
+            location_data=locations_raw,
+            car_data=car_data_raw,
+            radio_data=radio_raw,
+            step=time_step,
+            laps_data=laps_raw,
+            start_lap=start_lap,
+        )
         return cls(frames=frames, time_step=time_step)
 
     @staticmethod
@@ -66,6 +76,8 @@ class HistoricalReplaySource(SessionSource):
         car_data: List[dict],
         radio_data: List[dict],
         step: float,
+        laps_data: Optional[List[dict]] = None,
+        start_lap: Optional[int] = None,
     ) -> List[ReplayFrame]:
         if not location_data:
             return []
@@ -76,6 +88,30 @@ class HistoricalReplaySource(SessionSource):
             return []
 
         parsed_locations.sort(key=lambda x: x[0])
+
+        parsed_laps = []
+        if laps_data:
+            for lap in laps_data:
+                if "date_start" in lap and lap.get("lap_duration") is not None:
+                    l_start = _parse_iso(lap["date_start"])
+                    l_dur = float(lap["lap_duration"])
+                    parsed_laps.append({
+                        "lap_number": int(lap.get("lap_number", 0)),
+                        "driver_number": int(lap.get("driver_number", 0)),
+                        "start": l_start,
+                        "duration": l_dur,
+                        "end_ts": l_start.timestamp() + l_dur,
+                    })
+
+        # If start_lap is requested, anchor playback start to that lap
+        if start_lap is not None and parsed_laps:
+            target_laps = [l for l in parsed_laps if l["lap_number"] == start_lap]
+            if target_laps:
+                target_start = min(l["start"] for l in target_laps)
+                parsed_locations = [(dt, loc) for dt, loc in parsed_locations if dt >= target_start]
+                if not parsed_locations:
+                    return []
+
         start_time = parsed_locations[0][0]
         end_time = parsed_locations[-1][0]
         total_duration = max(0.0, (end_time - start_time).total_seconds())
@@ -89,14 +125,32 @@ class HistoricalReplaySource(SessionSource):
 
         # 1. Bucket locations (keep latest position per driver per bucket)
         for dt, loc in parsed_locations:
-            bucket_idx = min(int((dt - start_time).total_seconds() / step), num_buckets - 1)
+            offset = (dt - start_time).total_seconds()
+            if offset < 0.0:
+                continue
+            bucket_idx = min(int(offset / step), num_buckets - 1)
             drv = int(loc["driver_number"])
+
+            # Determine lap progress
+            prog = None
+            if "progress" in loc and loc["progress"] is not None:
+                prog = float(loc["progress"])
+            elif parsed_laps:
+                dt_ts = dt.timestamp()
+                for l in parsed_laps:
+                    if l["driver_number"] == drv or l["driver_number"] == 0:
+                        l_start_ts = l["start"].timestamp()
+                        if l_start_ts <= dt_ts <= l["end_ts"]:
+                            if l["duration"] > 0:
+                                prog = max(0.0, min(1.0, (dt_ts - l_start_ts) / l["duration"]))
+                            break
+
             bucket_positions[bucket_idx][drv] = CarPositionTick(
                 driver_number=drv,
                 x=float(loc.get("x", 0.0)),
                 y=float(loc.get("y", 0.0)),
                 z=float(loc.get("z", 0.0)),
-                progress=float(loc["progress"]) if "progress" in loc and loc["progress"] is not None else None,
+                progress=prog,
             )
 
         # 2. Bucket car telemetry (keep latest per driver per bucket)

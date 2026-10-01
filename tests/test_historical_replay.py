@@ -83,3 +83,37 @@ def test_build_frames_time_bucketing():
     # Frame 1 (time 0.2) has the radio event
     assert len(frames[1].radio_events) == 1
     assert frames[1].radio_events[0].recording_url == "https://example.com/radio.mp3"
+
+
+def test_build_frames_with_laps_and_start_lap():
+    locations_raw = [
+        {"date": "2024-07-07T13:50:00.000+00:00", "driver_number": 44, "x": 0.0, "y": 0.0, "z": 0.0},
+        {"date": "2024-07-07T14:00:00.000+00:00", "driver_number": 44, "x": 100.0, "y": 200.0, "z": 0.0},
+        {"date": "2024-07-07T14:00:50.000+00:00", "driver_number": 44, "x": 300.0, "y": 400.0, "z": 0.0},
+    ]
+    laps_raw = [
+        {
+            "lap_number": 1,
+            "driver_number": 44,
+            "date_start": "2024-07-07T14:00:00.000+00:00",
+            "lap_duration": 100.0,
+        }
+    ]
+
+    frames = HistoricalReplaySource._build_frames(
+        weather_data=[],
+        location_data=locations_raw,
+        car_data=[],
+        radio_data=[],
+        step=10.0,
+        laps_data=laps_raw,
+        start_lap=1,
+    )
+
+    # Frame at 13:50 should be discarded because start_lap=1 begins at 14:00
+    assert frames[0].session_time == 0.0
+    assert frames[0].positions[0].progress == pytest.approx(0.0, abs=1e-3)
+
+    # Frame at 50s into 100s lap should have ~0.5 progress
+    frame_50s = [f for f in frames if pytest.approx(f.session_time, abs=0.1) == 50.0][0]
+    assert frame_50s.positions[0].progress == pytest.approx(0.5, abs=1e-2)
