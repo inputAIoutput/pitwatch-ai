@@ -42,13 +42,14 @@ class HistoricalReplaySource(SessionSource):
     async def from_openf1(
         cls,
         session_key: int,
+        driver_number: Optional[int] = None,
         client: Optional[OpenF1Client] = None,
         time_step: float = 0.2,
     ) -> "HistoricalReplaySource":
         client = client or OpenF1Client()
         weather_raw = await client.get_weather(session_key)
-        locations_raw = await client.get_location(session_key)
-        car_data_raw = await client.get_car_data(session_key)
+        locations_raw = await client.get_location(session_key, driver_number=driver_number)
+        car_data_raw = await client.get_car_data(session_key, driver_number=driver_number)
         radio_raw = await client.get_team_radio(session_key)
 
         frames = cls._build_frames(weather_raw, locations_raw, car_data_raw, radio_raw, time_step)
