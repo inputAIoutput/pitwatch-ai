@@ -1,7 +1,7 @@
 from typing import Optional
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from pitwatch.api.routes import session, telemetry
+from pitwatch.api.routes import session, telemetry, stream
 from pitwatch.state.session import LiveSessionState
 
 
@@ -26,8 +26,9 @@ def create_app(session_state: Optional[LiveSessionState] = None) -> FastAPI:
         session_state if session_state is not None else LiveSessionState(session_key=9558, circuit_name="Silverstone")
     )
 
-    # Include REST routers
+    # Include routers
     app.include_router(session.router)
     app.include_router(telemetry.router)
+    app.include_router(stream.router)
 
     return app
