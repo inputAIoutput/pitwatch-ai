@@ -33,6 +33,10 @@ class HistoricalReplaySource(SessionSource):
         self.time_step = time_step
         self.controller = PlaybackController(speed_multiplier=1.0)
         self._current_index = 0
+        self.state = None
+
+    def bind_state(self, state) -> None:
+        self.state = state
 
     @classmethod
     def from_frames(cls, frames: List[ReplayFrame], time_step: float = 0.2) -> "HistoricalReplaySource":
@@ -172,6 +176,11 @@ class HistoricalReplaySource(SessionSource):
 
             frame = self.frames[self._current_index]
             self.controller.current_session_time = frame.session_time
+
+            # Synchronize bound LiveSessionState if registered
+            if self.state is not None:
+                self.state.ingest_frame(frame)
+
             yield frame
 
             self._current_index += 1
