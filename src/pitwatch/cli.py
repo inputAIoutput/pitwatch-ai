@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from pitwatch.ingestion.replay import HistoricalReplaySource
 from pitwatch.ingestion.openf1_client import OpenF1Client
+from pitwatch.state.session import LiveSessionState
 
 
 def parse_args(args=None):
@@ -25,27 +26,30 @@ async def main():
     print(f"[PitWatch AI] Initializing Historical Replay for Year {args.year}, Round {args.round}, Driver #{args.driver} at {args.speed}x...")
     client = OpenF1Client()
     # Session 9558 is 2024 Silverstone Grand Prix
+    state = LiveSessionState(session_key=9558, circuit_name="Silverstone")
     source = await HistoricalReplaySource.from_openf1(
         session_key=9558,
         driver_number=args.driver,
         client=client,
         time_step=0.2,
     )
+    source.bind_state(state)
     source.controller.set_speed(args.speed)
     source.controller.play()
 
     count = 0
     async for frame in source.stream_frames():
         weather_str = f"{frame.weather.track_temperature} C" if frame.weather else "N/A"
-        radio_count = len(frame.radio_events)
+        norm_pos = state.get_normalized_position(args.driver)
+        coord_str = f"norm=({norm_pos['x']:.2f}, {norm_pos['y']:.2f}) prog={norm_pos['progress']:.2f}" if norm_pos else "norm=N/A"
         print(
-            f"[{frame.session_time:.1f}s] Cars tracked: {len(frame.positions)} | "
-            f"Telemetry ticks: {len(frame.telemetry)} | Weather: {weather_str} | Radios: {radio_count}"
+            f"[{frame.session_time:.1f}s] {coord_str} | "
+            f"Telemetry: {len(frame.telemetry)} ticks | Weather: {weather_str}"
         )
         count += 1
         if count >= args.frames:
             break
-    print(f"[PitWatch AI] Successfully verified {count} frames of replay telemetry.")
+    print(f"[PitWatch AI] Successfully verified {count} frames with normalized coordinates.")
 
 
 if __name__ == "__main__":
