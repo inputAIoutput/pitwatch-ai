@@ -1,5 +1,6 @@
 from .geometry import CoordinateNormalizer, CircuitBounds
 from .driver import DriverState, LapSummary, LeaderboardEntry, TyreCompound
+from .session import LiveSessionState
 
 __all__ = [
     "CoordinateNormalizer",
@@ -8,4 +9,5 @@ __all__ = [
     "LapSummary",
     "LeaderboardEntry",
     "TyreCompound",
+    "LiveSessionState",
 ]
