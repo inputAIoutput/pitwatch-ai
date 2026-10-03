@@ -195,3 +195,35 @@ def test_lap_completion_updates_last_lap_and_tyre_age():
     assert ham.last_lap_time == 92.0
     assert ham.tyre_age_laps == 0  # Lap 3 is stint 2 start lap (3 - 3 + 0 = 0)
     assert ham.current_compound.value == "INTERMEDIATE"
+
+
+def test_live_session_state_weather_evaluator_integration():
+    state = LiveSessionState(session_key=9558, circuit_name="Silverstone")
+
+    # Ingest dry frame
+    frame_dry = ReplayFrame(
+        session_time=100.0,
+        timestamp=datetime(2024, 7, 7, 14, 0, 0, tzinfo=timezone.utc),
+        weather=WeatherTick(track_temperature=34.0, air_temperature=18.0, rainfall=0, humidity=50.0),
+    )
+    state.ingest_frame(frame_dry)
+    current_wx = state.get_current_weather()
+    assert current_wx["track_temperature"] == 34.0
+    assert current_wx["crossover_status"] == "DRY_OPTIMAL"
+    assert current_wx["recommended_compound"] == "SLICK"
+    assert current_wx["thermal_drift_rate"] == 0.0
+
+    # Ingest cooling + wet frame
+    frame_rain = ReplayFrame(
+        session_time=160.0,
+        timestamp=datetime(2024, 7, 7, 14, 1, 0, tzinfo=timezone.utc),
+        weather=WeatherTick(track_temperature=31.0, air_temperature=17.0, rainfall=1, humidity=75.0),
+    )
+    state.ingest_frame(frame_rain)
+    updated_wx = state.get_current_weather()
+    assert updated_wx["rainfall"] == 1
+    assert updated_wx["thermal_drift_rate"] < 0.0
+    assert updated_wx["crossover_status"] == "SLICK_TO_INTERMEDIATE"
+    assert updated_wx["recommended_compound"] == "INTERMEDIATE"
+    assert updated_wx["active_alert"] is not None
+

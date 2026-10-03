@@ -3,6 +3,7 @@ from typing import Dict, List, Optional
 from pitwatch.models.frame import ReplayFrame, WeatherTick
 from pitwatch.state.driver import DriverState, LeaderboardEntry
 from pitwatch.state.geometry import CoordinateNormalizer, CircuitBounds
+from pitwatch.intelligence.weather import EnvironmentalEvaluator
 
 
 class LiveSessionState:
@@ -23,6 +24,7 @@ class LiveSessionState:
         )
         self.drivers: Dict[int, DriverState] = {}
         self.weather: Optional[WeatherTick] = None
+        self.weather_evaluator = EnvironmentalEvaluator()
         self.current_session_time: float = 0.0
         self.leaderboard: List[LeaderboardEntry] = []
         self.drivers_meta_lookup: Dict[int, dict] = {}
@@ -152,6 +154,11 @@ class LiveSessionState:
 
         if frame.weather is not None:
             self.weather = frame.weather
+            self.weather_evaluator.record_weather(
+                tick=frame.weather,
+                session_time=frame.session_time,
+                timestamp=frame.timestamp,
+            )
 
         # Ingest positions
         for pos in frame.positions:
@@ -333,4 +340,32 @@ class LiveSessionState:
             "rainfall": self.weather.rainfall if self.weather else 0,
             "vehicles": vehicles,
         }
+
+    def get_current_weather(self) -> dict:
+        latest = self.weather or WeatherTick(track_temperature=0.0, air_temperature=0.0)
+        vx, vy = self.weather_evaluator.get_wind_vector()
+        drift = self.weather_evaluator.get_thermal_drift_rate()
+        grip_loss = self.weather_evaluator.project_tyre_grip_loss()
+        alert = self.weather_evaluator.active_alert
+
+        return {
+            "session_key": self.session_key,
+            "session_time": self.current_session_time,
+            "timestamp": latest.timestamp,
+            "track_temperature": latest.track_temperature,
+            "air_temperature": latest.air_temperature,
+            "rainfall": latest.rainfall,
+            "wind_speed": latest.wind_speed,
+            "wind_direction": latest.wind_direction or 0,
+            "wind_x": vx,
+            "wind_y": vy,
+            "humidity": latest.humidity or 0.0,
+            "pressure": latest.pressure,
+            "thermal_drift_rate": drift,
+            "grip_loss_projection": grip_loss,
+            "crossover_status": self.weather_evaluator.crossover_status.value,
+            "recommended_compound": self.weather_evaluator.recommended_compound,
+            "active_alert": alert.model_dump() if alert else None,
+        }
+
 

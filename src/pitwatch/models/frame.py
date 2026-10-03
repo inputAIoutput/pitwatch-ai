@@ -28,6 +28,8 @@ class WeatherTick(BaseModel):
     wind_speed: float = 0.0
     wind_direction: Optional[int] = 0
     humidity: Optional[float] = 0.0
+    pressure: Optional[float] = None
+    timestamp: Optional[datetime] = None
 
 
 class RadioEventTick(BaseModel):
