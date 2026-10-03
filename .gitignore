@@ -33,7 +33,8 @@ venv/
 ENV/
 
 # Audio and telemetry data cache
-data/
+data/*
+!data/presets/
 cache/
 *.wav
 *.mp3

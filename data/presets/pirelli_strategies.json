@@ -1,0 +1,127 @@
+{
+  "abu dhabi": {
+    "circuit_name": "Yas Marina Circuit",
+    "circuit_key": "abu_dhabi",
+    "total_laps": 58,
+    "pit_transit_loss_seconds": 22.0,
+    "strategies": [
+      {
+        "strategy_id": "ABU_DHABI_1STOP_M_H",
+        "name": "Pirelli Optimal (1-Stop)",
+        "stops": 1,
+        "is_fastest": true,
+        "delta_seconds": 0.0,
+        "pit_window": [16, 22],
+        "stints": [
+          {"stint_index": 1, "compound": "MEDIUM", "start_lap": 1, "end_lap": 19},
+          {"stint_index": 2, "compound": "HARD", "start_lap": 20, "end_lap": 58}
+        ]
+      },
+      {
+        "strategy_id": "ABU_DHABI_1STOP_H_M",
+        "name": "Pirelli Alternative (1-Stop Reverse)",
+        "stops": 1,
+        "is_fastest": false,
+        "delta_seconds": 4.5,
+        "pit_window": [36, 42],
+        "stints": [
+          {"stint_index": 1, "compound": "HARD", "start_lap": 1, "end_lap": 38},
+          {"stint_index": 2, "compound": "MEDIUM", "start_lap": 39, "end_lap": 58}
+        ]
+      },
+      {
+        "strategy_id": "ABU_DHABI_2STOP_M_H_M",
+        "name": "Pirelli Aggressive (2-Stop)",
+        "stops": 2,
+        "is_fastest": false,
+        "delta_seconds": 8.0,
+        "pit_window": [12, 16],
+        "stints": [
+          {"stint_index": 1, "compound": "MEDIUM", "start_lap": 1, "end_lap": 14},
+          {"stint_index": 2, "compound": "HARD", "start_lap": 15, "end_lap": 36},
+          {"stint_index": 3, "compound": "MEDIUM", "start_lap": 37, "end_lap": 58}
+        ]
+      }
+    ]
+  },
+  "yas marina": {
+    "circuit_name": "Yas Marina Circuit",
+    "circuit_key": "abu_dhabi",
+    "total_laps": 58,
+    "pit_transit_loss_seconds": 22.0,
+    "strategies": [
+      {
+        "strategy_id": "ABU_DHABI_1STOP_M_H",
+        "name": "Pirelli Optimal (1-Stop)",
+        "stops": 1,
+        "is_fastest": true,
+        "delta_seconds": 0.0,
+        "pit_window": [16, 22],
+        "stints": [
+          {"stint_index": 1, "compound": "MEDIUM", "start_lap": 1, "end_lap": 19},
+          {"stint_index": 2, "compound": "HARD", "start_lap": 20, "end_lap": 58}
+        ]
+      }
+    ]
+  },
+  "silverstone": {
+    "circuit_name": "Silverstone Circuit",
+    "circuit_key": "silverstone",
+    "total_laps": 52,
+    "pit_transit_loss_seconds": 21.5,
+    "strategies": [
+      {
+        "strategy_id": "SILVERSTONE_1STOP_M_H",
+        "name": "Pirelli Optimal (1-Stop)",
+        "stops": 1,
+        "is_fastest": true,
+        "delta_seconds": 0.0,
+        "pit_window": [22, 28],
+        "stints": [
+          {"stint_index": 1, "compound": "MEDIUM", "start_lap": 1, "end_lap": 24},
+          {"stint_index": 2, "compound": "HARD", "start_lap": 25, "end_lap": 52}
+        ]
+      }
+    ]
+  },
+  "monaco": {
+    "circuit_name": "Circuit de Monaco",
+    "circuit_key": "monaco",
+    "total_laps": 78,
+    "pit_transit_loss_seconds": 19.5,
+    "strategies": [
+      {
+        "strategy_id": "MONACO_1STOP_M_H",
+        "name": "Pirelli Optimal (1-Stop)",
+        "stops": 1,
+        "is_fastest": true,
+        "delta_seconds": 0.0,
+        "pit_window": [30, 38],
+        "stints": [
+          {"stint_index": 1, "compound": "MEDIUM", "start_lap": 1, "end_lap": 34},
+          {"stint_index": 2, "compound": "HARD", "start_lap": 35, "end_lap": 78}
+        ]
+      }
+    ]
+  },
+  "monza": {
+    "circuit_name": "Autodromo Nazionale Monza",
+    "circuit_key": "monza",
+    "total_laps": 53,
+    "pit_transit_loss_seconds": 24.0,
+    "strategies": [
+      {
+        "strategy_id": "MONZA_1STOP_M_H",
+        "name": "Pirelli Optimal (1-Stop)",
+        "stops": 1,
+        "is_fastest": true,
+        "delta_seconds": 0.0,
+        "pit_window": [20, 26],
+        "stints": [
+          {"stint_index": 1, "compound": "MEDIUM", "start_lap": 1, "end_lap": 22},
+          {"stint_index": 2, "compound": "HARD", "start_lap": 23, "end_lap": 53}
+        ]
+      }
+    ]
+  }
+}
