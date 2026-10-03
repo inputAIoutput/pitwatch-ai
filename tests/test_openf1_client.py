@@ -56,3 +56,26 @@ async def test_openf1_laps_endpoint(tmp_path: Path):
     assert len(result) == 1
     assert result[0]["lap_number"] == 1
     assert result[0]["lap_duration"] == 96.402
+
+
+@pytest.mark.asyncio
+async def test_openf1_stints_endpoint(tmp_path: Path):
+    client = OpenF1Client(cache_dir=str(tmp_path))
+    fake_stints = [
+        {
+            "session_key": 9558,
+            "driver_number": 44,
+            "stint_number": 1,
+            "lap_start": 1,
+            "lap_end": 27,
+            "compound": "MEDIUM",
+            "tyre_age_at_start": 0,
+        }
+    ]
+    cache_file = tmp_path / "stints_session_key-9558.json"
+    cache_file.write_text(json.dumps(fake_stints), encoding="utf-8")
+
+    result = await client.get_stints(session_key=9558)
+    assert len(result) == 1
+    assert result[0]["driver_number"] == 44
+    assert result[0]["compound"] == "MEDIUM"

@@ -25,22 +25,127 @@ class LiveSessionState:
         self.weather: Optional[WeatherTick] = None
         self.current_session_time: float = 0.0
         self.leaderboard: List[LeaderboardEntry] = []
+        self.drivers_meta_lookup: Dict[int, dict] = {}
+        self.stints_by_driver: Dict[int, List[dict]] = {}
+        self.laps_by_driver: Dict[int, List[dict]] = {}
 
     def register_driver(
         self,
         driver_number: int,
         driver_code: str = "DRV",
         team_name: Optional[str] = None,
+        team_colour: Optional[str] = None,
         grid_position: Optional[int] = None,
     ) -> DriverState:
         if driver_number not in self.drivers:
+            meta = self.drivers_meta_lookup.get(driver_number, {})
+            resolved_code = meta.get("driver_code") if driver_code == "DRV" else driver_code
+            resolved_team = meta.get("team_name") if (team_name is None or team_name == "Unknown") else team_name
+            resolved_colour = meta.get("team_colour") if team_colour is None else team_colour
             self.drivers[driver_number] = DriverState(
                 driver_number=driver_number,
-                driver_code=driver_code,
-                team_name=team_name,
+                driver_code=resolved_code or driver_code,
+                team_name=resolved_team or "Unknown",
+                team_colour=resolved_colour,
                 grid_position=grid_position,
             )
+            self._apply_stint_for_driver(driver_number)
         return self.drivers[driver_number]
+
+    def load_drivers(self, drivers_data: List[dict], active_driver_numbers: Optional[List[int]] = None) -> None:
+        """Loads driver metadata (name acronym, team name, team colour) and registers them.
+        If active_driver_numbers is specified, only registers those drivers.
+        """
+        for d in drivers_data:
+            drv_num = int(d.get("driver_number", 0))
+            if drv_num <= 0:
+                continue
+            code = d.get("name_acronym") or d.get("driver_code") or "DRV"
+            team = d.get("team_name") or "Unknown"
+            colour = d.get("team_colour")
+            self.drivers_meta_lookup[drv_num] = {
+                "driver_code": code,
+                "team_name": team,
+                "team_colour": colour,
+            }
+            if active_driver_numbers is not None and drv_num not in active_driver_numbers:
+                continue
+            if drv_num in self.drivers:
+                self.drivers[drv_num].driver_code = code
+                self.drivers[drv_num].team_name = team
+                self.drivers[drv_num].team_colour = colour
+            else:
+                self.register_driver(
+                    driver_number=drv_num,
+                    driver_code=code,
+                    team_name=team,
+                    team_colour=colour,
+                )
+
+    def load_stints(self, stints_data: List[dict]) -> None:
+        """Loads tyre stint records per driver."""
+        self.stints_by_driver = {}
+        for s in stints_data:
+            drv = int(s.get("driver_number", 0))
+            if drv <= 0:
+                continue
+            if drv not in self.stints_by_driver:
+                self.stints_by_driver[drv] = []
+            self.stints_by_driver[drv].append(s)
+
+        for drv, s_list in self.stints_by_driver.items():
+            s_list.sort(key=lambda x: x.get("stint_number", 1))
+            if drv in self.drivers:
+                self._apply_stint_for_driver(drv)
+
+    def load_laps(self, laps_data: List[dict]) -> None:
+        """Loads lap timing records per driver."""
+        for lap in laps_data:
+            drv = int(lap.get("driver_number", 0))
+            if drv <= 0 or "date_start" not in lap or lap.get("lap_duration") is None:
+                continue
+            if drv not in self.laps_by_driver:
+                self.laps_by_driver[drv] = []
+
+            dt = datetime.fromisoformat(lap["date_start"])
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            dur = float(lap["lap_duration"])
+            self.laps_by_driver[drv].append({
+                "lap_number": int(lap.get("lap_number", 1)),
+                "date_start": dt,
+                "end_ts": dt.timestamp() + dur,
+                "lap_duration": dur,
+            })
+        for drv, l_list in self.laps_by_driver.items():
+            l_list.sort(key=lambda x: x["lap_number"])
+
+    def _apply_stint_for_driver(self, driver_number: int) -> None:
+        drv = self.drivers.get(driver_number)
+        if not drv:
+            return
+        stints = self.stints_by_driver.get(driver_number, [])
+        if not stints:
+            return
+
+        curr_lap = drv.current_lap
+        active_stint = None
+        for s in stints:
+            lap_start = s.get("lap_start") or 1
+            lap_end = s.get("lap_end") or 999
+            if lap_start <= curr_lap <= lap_end:
+                active_stint = s
+                break
+
+        if not active_stint and stints:
+            active_stint = stints[0]
+
+        if active_stint:
+            compound = active_stint.get("compound", "UNKNOWN")
+            tyre_age_at_start = int(active_stint.get("tyre_age_at_start", 0))
+            lap_start = active_stint.get("lap_start") or 1
+            laps_on_tyre = max(0, curr_lap - lap_start)
+            drv.set_compound(compound, tyre_age_at_start=tyre_age_at_start + laps_on_tyre)
 
     def ingest_frame(self, frame: ReplayFrame) -> None:
         self.current_session_time = frame.session_time
@@ -57,6 +162,22 @@ class LiveSessionState:
         for tel in frame.telemetry:
             drv = self.register_driver(tel.driver_number)
             drv.update_telemetry(tel)
+
+        # Update lap tracking and tyre stints for active drivers
+        if frame.timestamp is not None and self.laps_by_driver:
+            frame_ts = frame.timestamp.timestamp()
+            for drv_num, drv in self.drivers.items():
+                laps = self.laps_by_driver.get(drv_num, [])
+                if not laps:
+                    continue
+                completed_laps = [l for l in laps if l["end_ts"] <= frame_ts]
+                if completed_laps:
+                    last_completed = completed_laps[-1]
+                    drv.last_lap_time = last_completed["lap_duration"]
+                    drv.current_lap = last_completed["lap_number"] + 1
+                else:
+                    drv.current_lap = laps[0]["lap_number"]
+                self._apply_stint_for_driver(drv_num)
 
         self._recalculate_leaderboard()
 
@@ -131,16 +252,38 @@ class LiveSessionState:
     def get_session_summary(self) -> dict:
         """Returns high-level session status and driver metadata."""
         drivers_meta = []
-        for entry in self.leaderboard:
-            drv = self.drivers.get(entry.driver_number)
-            drivers_meta.append({
-                "driver_number": entry.driver_number,
-                "driver_code": entry.driver_code,
-                "team_name": drv.team_name if drv else "Unknown",
-                "current_position": entry.position,
-                "current_compound": entry.current_compound,
-                "tyre_age_laps": entry.tyre_age_laps,
-            })
+        session_lap = 1
+        if self.leaderboard:
+            session_lap = self.leaderboard[0].current_lap
+            for entry in self.leaderboard:
+                drv = self.drivers.get(entry.driver_number)
+                drivers_meta.append({
+                    "driver_number": entry.driver_number,
+                    "driver_code": entry.driver_code,
+                    "team_name": drv.team_name if drv else "Unknown",
+                    "team_colour": drv.team_colour if drv else None,
+                    "current_position": entry.position,
+                    "current_lap": entry.current_lap,
+                    "current_compound": entry.current_compound,
+                    "tyre_age_laps": entry.tyre_age_laps,
+                    "last_lap_time": entry.last_lap_time,
+                })
+        else:
+            if self.drivers:
+                session_lap = max((d.current_lap for d in self.drivers.values()), default=1)
+            for drv_num in sorted(self.drivers.keys()):
+                drv = self.drivers[drv_num]
+                drivers_meta.append({
+                    "driver_number": drv.driver_number,
+                    "driver_code": drv.driver_code,
+                    "team_name": drv.team_name,
+                    "team_colour": drv.team_colour,
+                    "current_position": drv.current_position,
+                    "current_lap": drv.current_lap,
+                    "current_compound": drv.current_compound.value,
+                    "tyre_age_laps": drv.tyre_age_laps,
+                    "last_lap_time": drv.last_lap_time,
+                })
         return {
             "session_key": self.session_key,
             "circuit_name": self.circuit_name,
@@ -148,6 +291,8 @@ class LiveSessionState:
             "session_name": "Grand Prix",
             "status": "active",
             "current_session_time": self.current_session_time,
+            "current_lap": session_lap,
+            "total_laps": 52,
             "total_drivers": len(self.drivers),
             "drivers": drivers_meta,
         }
@@ -165,6 +310,7 @@ class LiveSessionState:
                 "driver_number": entry.driver_number,
                 "driver_code": entry.driver_code,
                 "team_name": drv.team_name,
+                "team_colour": drv.team_colour,
                 "position": entry.position,
                 "speed": tel.speed if tel else 0,
                 "gear": tel.gear if tel else 0,

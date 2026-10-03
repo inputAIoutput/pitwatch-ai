@@ -13,12 +13,22 @@ from pitwatch.ingestion.openf1_client import OpenF1Client
 from pitwatch.state.session import LiveSessionState
 
 
+def parse_driver_arg(val: str):
+    if "," in str(val):
+        return str(val)
+    try:
+        return int(val)
+    except ValueError:
+        return val
+
+
 def parse_args(args=None):
     parser = argparse.ArgumentParser(description="PitWatch AI Historical Replay CLI")
     parser.add_argument("--year", type=int, default=2024, help="Championship year")
     parser.add_argument("--round", type=int, default=12, help="Grand Prix round number")
     parser.add_argument("--speed", type=float, default=1.0, help="Playback speed multiplier (1x-10x)")
-    parser.add_argument("--driver", type=int, default=44, help="Driver number to track (default 44)")
+    parser.add_argument("--driver", type=parse_driver_arg, default=44, help="Driver number or comma-separated list of drivers (default 44)")
+    parser.add_argument("--drivers", type=str, default=None, help="Comma-separated list of driver numbers (e.g. '44,1')")
     parser.add_argument("--frames", type=int, default=10, help="Number of frames to verify before stopping")
     parser.add_argument("--lap", type=int, default=1, help="Lap number to start replay from (default 1 for race start, 0 for pre-race garage)")
     parser.add_argument("--serve", action="store_true", help="Launch FastAPI REST & WebSocket server alongside replay")
@@ -39,12 +49,39 @@ async def main():
     state = LiveSessionState(session_key=9558, circuit_name="Silverstone")
     start_lap = args.lap if args.lap > 0 else None
 
+    # Pre-populate driver metadata, tyre stints, and laps
+    try:
+        drivers_raw = await client.get_drivers(session_key=9558)
+
+        # Parse target drivers list
+        raw_drivers = str(args.drivers if args.drivers is not None else args.driver)
+        if raw_drivers.strip().lower() == "all":
+            target_drivers = [int(d["driver_number"]) for d in drivers_raw if d.get("driver_number")]
+        elif "," in raw_drivers:
+            target_drivers = [int(d.strip()) for d in raw_drivers.split(",") if d.strip().isdigit()]
+        else:
+            target_drivers = [int(args.driver if not isinstance(args.driver, str) or args.driver.isdigit() else 44)]
+
+        state.load_drivers(drivers_raw, active_driver_numbers=target_drivers)
+        stints_raw = await client.get_stints(session_key=9558)
+        state.load_stints(stints_raw)
+        for drv_id in target_drivers:
+            try:
+                laps_raw = await client.get_laps(session_key=9558, driver_number=drv_id)
+                state.load_laps(laps_raw)
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"[PitWatch AI] Warning: Failed to load driver metadata/stints: {e}")
+        target_drivers = [44]
+
     lap_msg = f"Lap #{args.lap}" if args.lap > 0 else "Pre-Race"
-    print(f"[PitWatch AI] Initializing Historical Replay for Year {args.year}, Round {args.round}, Driver #{args.driver} starting at {lap_msg} ({args.speed}x)...")
+    driver_str = ", ".join(f"#{d}" for d in target_drivers)
+    print(f"[PitWatch AI] Initializing Historical Replay for Year {args.year}, Round {args.round}, Driver(s) {driver_str} starting at {lap_msg} ({args.speed}x)...")
 
     source = await HistoricalReplaySource.from_openf1(
         session_key=9558,
-        driver_number=args.driver,
+        driver_number=target_drivers,
         client=client,
         time_step=0.2,
         start_lap=start_lap,
@@ -69,8 +106,12 @@ async def main():
         count = 0
         async for frame in source.stream_frames():
             weather_str = f"{frame.weather.track_temperature} C" if frame.weather else "N/A"
-            norm_pos = state.get_normalized_position(args.driver)
-            coord_str = f"norm=({norm_pos['x']:.2f}, {norm_pos['y']:.2f}) prog={norm_pos['progress']:.2f}" if norm_pos else "norm=N/A"
+            pos_strs = []
+            for d in target_drivers:
+                norm_pos = state.get_normalized_position(d)
+                if norm_pos:
+                    pos_strs.append(f"#{d}: ({norm_pos['x']:.2f}, {norm_pos['y']:.2f}) prog={norm_pos['progress']:.2f}")
+            coord_str = " | ".join(pos_strs) if pos_strs else "norm=N/A"
             print(
                 f"[{frame.session_time:.1f}s] {coord_str} | "
                 f"Telemetry: {len(frame.telemetry)} ticks | Weather: {weather_str}"

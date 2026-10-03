@@ -9,8 +9,8 @@ from pitwatch.state.session import LiveSessionState
 @pytest.fixture
 def populated_state():
     state = LiveSessionState(session_key=9558, circuit_name="Silverstone")
-    state.register_driver(driver_number=44, driver_code="HAM", team_name="Mercedes")
-    state.register_driver(driver_number=1, driver_code="VER", team_name="Red Bull")
+    state.register_driver(driver_number=44, driver_code="HAM", team_name="Mercedes", team_colour="27F4D2")
+    state.register_driver(driver_number=1, driver_code="VER", team_name="Red Bull", team_colour="3671C6")
 
     frame = ReplayFrame(
         session_time=5.2,
@@ -38,9 +38,15 @@ def test_get_session_current(populated_state):
     data = response.json()
     assert data["session_key"] == 9558
     assert data["circuit_name"] == "Silverstone"
+    assert data["current_lap"] == 1
+    assert data["total_laps"] == 52
     assert data["total_drivers"] == 2
     assert len(data["drivers"]) == 2
     assert data["drivers"][0]["driver_code"] == "HAM"
+    assert data["drivers"][0]["team_colour"] == "27F4D2"
+    assert data["drivers"][0]["current_lap"] == 1
+    assert "last_lap_time" in data["drivers"][0]
+    assert "tyre_age_laps" in data["drivers"][0]
 
 
 def test_get_telemetry_live(populated_state):
@@ -59,6 +65,7 @@ def test_get_telemetry_live(populated_state):
     assert leader["driver_number"] == 44
     assert leader["speed"] == 302
     assert leader["position"] == 1
+    assert leader["team_colour"] == "27F4D2"
     assert leader["gap_to_leader"] == 0.0
 
 

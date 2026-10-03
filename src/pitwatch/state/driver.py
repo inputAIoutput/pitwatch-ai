@@ -1,6 +1,6 @@
 from collections import deque
 from enum import Enum
-from typing import Deque, List, Optional
+from typing import Deque, List, Optional, Union
 from pydantic import BaseModel, Field
 from pitwatch.models.frame import CarPositionTick, TelemetryTick
 
@@ -43,11 +43,13 @@ class DriverState:
         driver_number: int,
         driver_code: str = "DRV",
         team_name: Optional[str] = None,
+        team_colour: Optional[str] = None,
         grid_position: Optional[int] = None,
     ):
         self.driver_number = driver_number
         self.driver_code = driver_code
         self.team_name = team_name or "Unknown"
+        self.team_colour = team_colour
         self.grid_position = grid_position or 0
         self.current_position = grid_position or 1
         self.current_lap = 1
@@ -64,9 +66,15 @@ class DriverState:
         # Fixed rolling 10-lap ring buffer
         self.rolling_laps: Deque[LapSummary] = deque(maxlen=10)
 
-    def set_compound(self, compound: TyreCompound) -> None:
-        self.current_compound = compound
-        self.tyre_age_laps = 0
+    def set_compound(self, compound: Union[TyreCompound, str], tyre_age_at_start: int = 0) -> None:
+        if isinstance(compound, str):
+            try:
+                self.current_compound = TyreCompound(compound.upper())
+            except ValueError:
+                self.current_compound = TyreCompound.UNKNOWN
+        else:
+            self.current_compound = compound
+        self.tyre_age_laps = tyre_age_at_start
 
     def increment_tyre_age(self) -> None:
         self.tyre_age_laps += 1

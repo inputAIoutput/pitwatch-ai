@@ -65,3 +65,9 @@ class OpenF1Client:
         if driver_number is not None:
             params["driver_number"] = driver_number
         return await self._fetch_cached("laps", params)
+
+    async def get_stints(self, session_key: int, driver_number: Optional[int] = None) -> List[Dict[str, Any]]:
+        params: Dict[str, Any] = {"session_key": session_key}
+        if driver_number is not None:
+            params["driver_number"] = driver_number
+        return await self._fetch_cached("stints", params)

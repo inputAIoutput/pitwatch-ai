@@ -1,7 +1,7 @@
 import asyncio
 from datetime import datetime, timezone
 import math
-from typing import AsyncIterator, Dict, List, Optional
+from typing import AsyncIterator, Dict, List, Optional, Union
 from pitwatch.ingestion.source import PlaybackController, PlaybackState, SessionSource
 from pitwatch.models.frame import (
     CarPositionTick,
@@ -46,17 +46,39 @@ class HistoricalReplaySource(SessionSource):
     async def from_openf1(
         cls,
         session_key: int,
-        driver_number: Optional[int] = None,
+        driver_number: Optional[Union[int, List[int], str]] = None,
         client: Optional[OpenF1Client] = None,
         time_step: float = 0.2,
         start_lap: Optional[int] = None,
     ) -> "HistoricalReplaySource":
         client = client or OpenF1Client()
         weather_raw = await client.get_weather(session_key)
-        locations_raw = await client.get_location(session_key, driver_number=driver_number)
-        car_data_raw = await client.get_car_data(session_key, driver_number=driver_number)
         radio_raw = await client.get_team_radio(session_key)
-        laps_raw = await client.get_laps(session_key, driver_number=driver_number)
+
+        # Normalize driver_number to a list if multiple are provided
+        driver_list: Optional[List[int]] = None
+        if isinstance(driver_number, int):
+            driver_list = [driver_number]
+        elif isinstance(driver_number, (list, tuple)):
+            driver_list = [int(d) for d in driver_number]
+        elif isinstance(driver_number, str):
+            driver_list = [int(d.strip()) for d in driver_number.split(",") if d.strip().isdigit()]
+
+        if driver_list:
+            locations_raw: List[dict] = []
+            car_data_raw: List[dict] = []
+            laps_raw: List[dict] = []
+            for d in driver_list:
+                locs = await client.get_location(session_key, driver_number=d)
+                locations_raw.extend(locs)
+                cars = await client.get_car_data(session_key, driver_number=d)
+                car_data_raw.extend(cars)
+                lps = await client.get_laps(session_key, driver_number=d)
+                laps_raw.extend(lps)
+        else:
+            locations_raw = await client.get_location(session_key)
+            car_data_raw = await client.get_car_data(session_key)
+            laps_raw = await client.get_laps(session_key)
 
         frames = cls._build_frames(
             weather_data=weather_raw,
@@ -165,7 +187,7 @@ class HistoricalReplaySource(SessionSource):
                 bucket_telemetry[bucket_idx][drv] = TelemetryTick(
                     driver_number=drv,
                     speed=int(entry.get("speed", 0)),
-                    gear=int(entry.get("gear", 0)),
+                    gear=int(entry.get("n_gear", entry.get("gear", 0))),
                     throttle=int(entry.get("throttle", 0)),
                     brake=int(entry.get("brake", 0)),
                     drs=int(entry.get("drs", 0)),

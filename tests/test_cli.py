@@ -19,3 +19,11 @@ def test_cli_serve_argument_parsing():
     assert args.host == "0.0.0.0"
     assert args.port == 8000
 
+
+def test_cli_multi_driver_parsing():
+    args = parse_args(["--drivers", "44,1"])
+    assert args.drivers == "44,1"
+
+    args2 = parse_args(["--driver", "44,1"])
+    assert args2.driver == "44,1"
+

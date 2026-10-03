@@ -7,9 +7,12 @@ class DriverMeta(BaseModel):
     driver_number: int
     driver_code: str
     team_name: str
+    team_colour: Optional[str] = None
     current_position: int
+    current_lap: int = 1
     current_compound: str = "UNKNOWN"
     tyre_age_laps: int = 0
+    last_lap_time: Optional[float] = None
 
 
 class SessionCurrentResponse(BaseModel):
@@ -19,6 +22,8 @@ class SessionCurrentResponse(BaseModel):
     session_name: str = "Grand Prix"
     status: str = "active"
     current_session_time: float
+    current_lap: int = 1
+    total_laps: int = 52
     total_drivers: int
     drivers: List[DriverMeta]
 
@@ -27,6 +32,7 @@ class VehicleTelemetrySnapshot(BaseModel):
     driver_number: int
     driver_code: str
     team_name: str
+    team_colour: Optional[str] = None
     position: int
     speed: int = 0
     gear: int = 0
