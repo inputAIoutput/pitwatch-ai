@@ -210,31 +210,59 @@ class HistoricalReplaySource(SessionSource):
                     )
                 )
 
-        # 4. Map active weather
-        weather_tick: Optional[WeatherTick] = None
+        # 4. Map active weather chronologically
+        from typing import Tuple
+        parsed_weather: List[Tuple[datetime, WeatherTick]] = []
         if weather_data:
-            w = weather_data[0]
-            weather_tick = WeatherTick(
-                track_temperature=float(w.get("track_temperature", 0.0)),
-                air_temperature=float(w.get("air_temperature", 0.0)),
-                rainfall=int(w.get("rainfall", 0)),
-                wind_speed=float(w.get("wind_speed", 0.0)),
-                wind_direction=int(w.get("wind_direction", 0)) if "wind_direction" in w else 0,
-                humidity=float(w.get("humidity", 0.0)) if "humidity" in w else 0.0,
-            )
+            for w in weather_data:
+                if "date" in w:
+                    w_dt = _parse_iso(w["date"])
+                    w_tick = WeatherTick(
+                        track_temperature=float(w.get("track_temperature", 0.0)),
+                        air_temperature=float(w.get("air_temperature", 0.0)),
+                        rainfall=int(w.get("rainfall", 0)),
+                        wind_speed=float(w.get("wind_speed", 0.0)),
+                        wind_direction=int(w.get("wind_direction", 0)) if "wind_direction" in w else 0,
+                        humidity=float(w.get("humidity", 0.0)) if "humidity" in w else 0.0,
+                        pressure=float(w.get("pressure", 0.0)) if "pressure" in w else None,
+                        timestamp=w_dt,
+                    )
+                    parsed_weather.append((w_dt, w_tick))
+                else:
+                    # Weather reading without date (e.g. mock test data without date)
+                    w_tick = WeatherTick(
+                        track_temperature=float(w.get("track_temperature", 0.0)),
+                        air_temperature=float(w.get("air_temperature", 0.0)),
+                        rainfall=int(w.get("rainfall", 0)),
+                        wind_speed=float(w.get("wind_speed", 0.0)),
+                        wind_direction=int(w.get("wind_direction", 0)) if "wind_direction" in w else 0,
+                        humidity=float(w.get("humidity", 0.0)) if "humidity" in w else 0.0,
+                        pressure=float(w.get("pressure", 0.0)) if "pressure" in w else None,
+                    )
+                    parsed_weather.append((start_time, w_tick))
+            parsed_weather.sort(key=lambda x: x[0])
 
-        # 5. Build chronological ReplayFrame list
+        # 5. Build chronological ReplayFrame list with active weather
         frames: List[ReplayFrame] = []
+        weather_idx = 0
+        current_active_weather: Optional[WeatherTick] = parsed_weather[0][1] if parsed_weather else None
+
         for i in range(num_buckets):
             session_time = round(i * step, 3)
             frame_timestamp = datetime.fromtimestamp(start_time.timestamp() + session_time, tz=timezone.utc)
+
+            # Advance weather pointer up to frame_timestamp
+            while weather_idx < len(parsed_weather) and parsed_weather[weather_idx][0] <= frame_timestamp:
+                current_active_weather = parsed_weather[weather_idx][1]
+                weather_idx += 1
+
             frames.append(
                 ReplayFrame(
                     session_time=session_time,
                     timestamp=frame_timestamp,
                     positions=list(bucket_positions[i].values()),
                     telemetry=list(bucket_telemetry[i].values()),
-                    weather=weather_tick,
+                    weather=current_active_weather,
                     radio_events=bucket_radio[i],
                 )
             )
