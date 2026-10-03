@@ -71,3 +71,37 @@ class PositionsStreamMessage(BaseModel):
     session_time: float
     timestamp: str
     positions: List[VehiclePositionPayload]
+
+
+class CrossoverAlertSchema(BaseModel):
+    alert_id: str
+    timestamp: datetime
+    session_time: float
+    severity: str
+    transition: str
+    current_track_temp: float
+    thermal_drift_rate: float
+    grip_loss_projection: float
+    recommended_compound: str
+    message: str
+
+
+class CurrentWeatherResponse(BaseModel):
+    session_key: int
+    session_time: float
+    timestamp: Optional[datetime] = None
+    track_temperature: float
+    air_temperature: float
+    rainfall: int
+    wind_speed: float
+    wind_direction: int
+    wind_x: float
+    wind_y: float
+    humidity: float
+    pressure: Optional[float] = None
+    thermal_drift_rate: float
+    grip_loss_projection: float
+    crossover_status: str
+    recommended_compound: str
+    active_alert: Optional[CrossoverAlertSchema] = None
+
