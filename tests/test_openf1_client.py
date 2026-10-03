@@ -100,3 +100,17 @@ async def test_openf1_positions_endpoint(tmp_path: Path):
     assert result[0]["driver_number"] == 4
     assert result[0]["position"] == 4
 
+
+@pytest.mark.asyncio
+async def test_openf1_client_bypass_cache(tmp_path: Path):
+    from unittest.mock import patch
+    client = OpenF1Client(cache_dir=str(tmp_path))
+    cache_file = tmp_path / "weather_session_key-11731.json"
+    cache_file.write_text(json.dumps([{"cached": True}]), encoding="utf-8")
+
+    # If bypass_cache=True, it should NOT read from disk cache
+    with patch.object(client, "_fetch_live", return_value=[{"live": True}]):
+        result = await client.get_weather(session_key=11731, bypass_cache=True)
+        assert result == [{"live": True}]
+
+

@@ -36,25 +36,62 @@ class OpenF1Client:
 
         return data
 
+    async def _fetch_live(self, endpoint: str, params: Dict[str, Any]) -> List[Dict[str, Any]]:
+        url = f"{self.BASE_URL}/{endpoint}"
+        async with httpx.AsyncClient(headers=self.headers, timeout=10.0) as client:
+            response = await client.get(url, params=params)
+            response.raise_for_status()
+            return response.json()
+
     async def get_sessions(self, year: int) -> List[Dict[str, Any]]:
         return await self._fetch_cached("sessions", {"year": year})
 
     async def get_drivers(self, session_key: int) -> List[Dict[str, Any]]:
         return await self._fetch_cached("drivers", {"session_key": session_key})
 
-    async def get_weather(self, session_key: int) -> List[Dict[str, Any]]:
-        return await self._fetch_cached("weather", {"session_key": session_key})
+    async def get_weather(
+        self,
+        session_key: int,
+        bypass_cache: bool = False,
+        date_gt: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        params: Dict[str, Any] = {"session_key": session_key}
+        if date_gt:
+            params["date>"] = date_gt
+        if bypass_cache:
+            return await self._fetch_live("weather", params)
+        return await self._fetch_cached("weather", params)
 
-    async def get_location(self, session_key: int, driver_number: Optional[int] = None) -> List[Dict[str, Any]]:
+    async def get_location(
+        self,
+        session_key: int,
+        driver_number: Optional[int] = None,
+        bypass_cache: bool = False,
+        date_gt: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         params: Dict[str, Any] = {"session_key": session_key}
         if driver_number is not None:
             params["driver_number"] = driver_number
+        if date_gt:
+            params["date>"] = date_gt
+        if bypass_cache:
+            return await self._fetch_live("location", params)
         return await self._fetch_cached("location", params)
 
-    async def get_car_data(self, session_key: int, driver_number: Optional[int] = None) -> List[Dict[str, Any]]:
+    async def get_car_data(
+        self,
+        session_key: int,
+        driver_number: Optional[int] = None,
+        bypass_cache: bool = False,
+        date_gt: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         params: Dict[str, Any] = {"session_key": session_key}
         if driver_number is not None:
             params["driver_number"] = driver_number
+        if date_gt:
+            params["date>"] = date_gt
+        if bypass_cache:
+            return await self._fetch_live("car_data", params)
         return await self._fetch_cached("car_data", params)
 
     async def get_team_radio(self, session_key: int) -> List[Dict[str, Any]]:
@@ -72,9 +109,20 @@ class OpenF1Client:
             params["driver_number"] = driver_number
         return await self._fetch_cached("stints", params)
 
-    async def get_positions(self, session_key: int, driver_number: Optional[int] = None) -> List[Dict[str, Any]]:
+    async def get_positions(
+        self,
+        session_key: int,
+        driver_number: Optional[int] = None,
+        bypass_cache: bool = False,
+        date_gt: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         params: Dict[str, Any] = {"session_key": session_key}
         if driver_number is not None:
             params["driver_number"] = driver_number
+        if date_gt:
+            params["date>"] = date_gt
+        if bypass_cache:
+            return await self._fetch_live("position", params)
         return await self._fetch_cached("position", params)
+
 
