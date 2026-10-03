@@ -15,6 +15,8 @@ CIRCUIT_PRESETS: Dict[str, CircuitBounds] = {
     "monza": CircuitBounds(min_x=-4500.0, max_x=4500.0, min_y=-2000.0, max_y=2000.0),
     "monaco": CircuitBounds(min_x=-1500.0, max_x=1500.0, min_y=-1500.0, max_y=1500.0),
     "spa": CircuitBounds(min_x=-5000.0, max_x=5000.0, min_y=-4000.0, max_y=4000.0),
+    "yas marina": CircuitBounds(min_x=-4000.0, max_x=4000.0, min_y=-3000.0, max_y=3000.0),
+    "abu dhabi": CircuitBounds(min_x=-4000.0, max_x=4000.0, min_y=-3000.0, max_y=3000.0),
 }
 
 

@@ -26,6 +26,8 @@ def parse_args(args=None):
     parser = argparse.ArgumentParser(description="PitWatch AI Historical Replay CLI")
     parser.add_argument("--year", type=int, default=2024, help="Championship year")
     parser.add_argument("--round", type=int, default=12, help="Grand Prix round number")
+    parser.add_argument("--session", type=int, default=None, help="OpenF1 session key (e.g. 9662 for Abu Dhabi, 9558 for Silverstone)")
+    parser.add_argument("--race", type=str, default=None, help="Grand Prix / circuit name alias (e.g. 'abu dhabi', 'silverstone')")
     parser.add_argument("--speed", type=float, default=1.0, help="Playback speed multiplier (1x-10x)")
     parser.add_argument("--driver", type=parse_driver_arg, default=44, help="Driver number or comma-separated list of drivers (default 44)")
     parser.add_argument("--drivers", type=str, default=None, help="Comma-separated list of driver numbers (e.g. '44,1')")
@@ -46,12 +48,46 @@ async def run_server(app, host: str, port: int):
 async def main():
     args = parse_args()
     client = OpenF1Client()
-    state = LiveSessionState(session_key=9558, circuit_name="Silverstone")
+
+    session_key = 9558
+    circuit_name = "Silverstone"
+
+    if args.session is not None:
+        session_key = args.session
+        if session_key == 9662:
+            circuit_name = "Yas Marina Circuit"
+        elif session_key == 9558:
+            circuit_name = "Silverstone"
+        elif session_key == 9538:
+            circuit_name = "Circuit de Monaco"
+        elif session_key == 9598:
+            circuit_name = "Autodromo Nazionale Monza"
+        else:
+            circuit_name = f"Session {session_key}"
+    elif args.race is not None:
+        clean_race = args.race.lower().strip()
+        if "abu" in clean_race or "yas" in clean_race:
+            session_key = 9662
+            circuit_name = "Yas Marina Circuit"
+        elif "silverstone" in clean_race:
+            session_key = 9558
+            circuit_name = "Silverstone"
+        elif "monaco" in clean_race:
+            session_key = 9538
+            circuit_name = "Circuit de Monaco"
+        elif "monza" in clean_race:
+            session_key = 9598
+            circuit_name = "Autodromo Nazionale Monza"
+    elif args.round == 24:
+        session_key = 9662
+        circuit_name = "Yas Marina Circuit"
+
+    state = LiveSessionState(session_key=session_key, circuit_name=circuit_name)
     start_lap = args.lap if args.lap > 0 else None
 
     # Pre-populate driver metadata, tyre stints, and laps
     try:
-        drivers_raw = await client.get_drivers(session_key=9558)
+        drivers_raw = await client.get_drivers(session_key=session_key)
 
         # Parse target drivers list
         raw_drivers = str(args.drivers if args.drivers is not None else args.driver)
@@ -63,11 +99,11 @@ async def main():
             target_drivers = [int(args.driver if not isinstance(args.driver, str) or args.driver.isdigit() else 44)]
 
         state.load_drivers(drivers_raw, active_driver_numbers=target_drivers)
-        stints_raw = await client.get_stints(session_key=9558)
+        stints_raw = await client.get_stints(session_key=session_key)
         state.load_stints(stints_raw)
         for drv_id in target_drivers:
             try:
-                laps_raw = await client.get_laps(session_key=9558, driver_number=drv_id)
+                laps_raw = await client.get_laps(session_key=session_key, driver_number=drv_id)
                 state.load_laps(laps_raw)
             except Exception:
                 pass
@@ -77,10 +113,10 @@ async def main():
 
     lap_msg = f"Lap #{args.lap}" if args.lap > 0 else "Pre-Race"
     driver_str = ", ".join(f"#{d}" for d in target_drivers)
-    print(f"[PitWatch AI] Initializing Historical Replay for Year {args.year}, Round {args.round}, Driver(s) {driver_str} starting at {lap_msg} ({args.speed}x)...")
+    print(f"[PitWatch AI] Initializing Historical Replay for Session {session_key} ({circuit_name}), Year {args.year}, Driver(s) {driver_str} starting at {lap_msg} ({args.speed}x)...")
 
     source = await HistoricalReplaySource.from_openf1(
-        session_key=9558,
+        session_key=session_key,
         driver_number=target_drivers,
         client=client,
         time_step=0.2,

@@ -58,11 +58,11 @@ class DeterministicStrategyEngine:
         pirelli_service: Optional[PirelliStrategyService] = None,
     ):
         self.circuit_name = circuit_name
-        self.total_laps = total_laps
         self.pit_loss = get_circuit_pit_loss(circuit_name)
         self.degradation_model = TyreDegradationModel()
         self.pirelli_service = pirelli_service or PirelliStrategyService()
         self.strategy_config = self.pirelli_service.get_strategy_for_circuit(circuit_name, total_laps)
+        self.total_laps = self.strategy_config.total_laps
 
     def assess_undercut_threat(
         self,

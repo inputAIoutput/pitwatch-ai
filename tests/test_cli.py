@@ -27,3 +27,9 @@ def test_cli_multi_driver_parsing():
     args2 = parse_args(["--driver", "44,1"])
     assert args2.driver == "44,1"
 
+
+def test_cli_race_and_session_argument_parsing():
+    args = parse_args(["--race", "abu dhabi", "--session", "9662"])
+    assert args.race == "abu dhabi"
+    assert args.session == 9662
+

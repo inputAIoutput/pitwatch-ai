@@ -301,7 +301,7 @@ class LiveSessionState:
             "status": "active",
             "current_session_time": self.current_session_time,
             "current_lap": session_lap,
-            "total_laps": 52,
+            "total_laps": self.strategy_engine.total_laps,
             "total_drivers": len(self.drivers),
             "drivers": drivers_meta,
         }
