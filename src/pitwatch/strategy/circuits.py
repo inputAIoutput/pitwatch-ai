@@ -15,6 +15,9 @@ CIRCUIT_PIT_LOSSES: Dict[str, float] = {
     "Hungaroring": 21.0,
     "Marina Bay": 28.0,
     "Yas Marina Circuit": 22.0,
+    "Sepang": 22.5,
+    "Kuala Lumpur": 22.5,
+    "Sepang International Circuit": 22.5,
 }
 
 DEFAULT_PIT_TRANSIT_LOSS: float = 22.0

@@ -123,5 +123,59 @@
         ]
       }
     ]
+  },
+  "kuala lumpur": {
+    "circuit_name": "Sepang International Circuit",
+    "circuit_key": "kuala_lumpur",
+    "total_laps": 56,
+    "pit_transit_loss_seconds": 22.5,
+    "strategies": [
+      {
+        "strategy_id": "SEPANG_2STOP_M_H_H",
+        "name": "Pirelli Optimal (2-Stop High Thermal)",
+        "stops": 2,
+        "is_fastest": true,
+        "delta_seconds": 0.0,
+        "pit_window": [14, 18],
+        "stints": [
+          {"stint_index": 1, "compound": "MEDIUM", "start_lap": 1, "end_lap": 16},
+          {"stint_index": 2, "compound": "HARD", "start_lap": 17, "end_lap": 36},
+          {"stint_index": 3, "compound": "HARD", "start_lap": 37, "end_lap": 56}
+        ]
+      },
+      {
+        "strategy_id": "SEPANG_1STOP_M_H",
+        "name": "Pirelli Alternative (1-Stop Conservation)",
+        "stops": 1,
+        "is_fastest": false,
+        "delta_seconds": 6.2,
+        "pit_window": [20, 26],
+        "stints": [
+          {"stint_index": 1, "compound": "MEDIUM", "start_lap": 1, "end_lap": 22},
+          {"stint_index": 2, "compound": "HARD", "start_lap": 23, "end_lap": 56}
+        ]
+      }
+    ]
+  },
+  "sepang": {
+    "circuit_name": "Sepang International Circuit",
+    "circuit_key": "kuala_lumpur",
+    "total_laps": 56,
+    "pit_transit_loss_seconds": 22.5,
+    "strategies": [
+      {
+        "strategy_id": "SEPANG_2STOP_M_H_H",
+        "name": "Pirelli Optimal (2-Stop High Thermal)",
+        "stops": 2,
+        "is_fastest": true,
+        "delta_seconds": 0.0,
+        "pit_window": [14, 18],
+        "stints": [
+          {"stint_index": 1, "compound": "MEDIUM", "start_lap": 1, "end_lap": 16},
+          {"stint_index": 2, "compound": "HARD", "start_lap": 17, "end_lap": 36},
+          {"stint_index": 3, "compound": "HARD", "start_lap": 37, "end_lap": 56}
+        ]
+      }
+    ]
   }
 }
