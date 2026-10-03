@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from pitwatch.api.app import create_app
 from pitwatch.ingestion.replay import HistoricalReplaySource
+from pitwatch.ingestion.live import LiveOpenF1Source
 from pitwatch.ingestion.openf1_client import OpenF1Client
 from pitwatch.state.session import LiveSessionState
 
@@ -26,8 +27,9 @@ def parse_args(args=None):
     parser = argparse.ArgumentParser(description="PitWatch AI Historical Replay CLI")
     parser.add_argument("--year", type=int, default=2024, help="Championship year")
     parser.add_argument("--round", type=int, default=12, help="Grand Prix round number")
-    parser.add_argument("--session", type=int, default=None, help="OpenF1 session key (e.g. 9662 for Abu Dhabi, 9558 for Silverstone)")
-    parser.add_argument("--race", type=str, default=None, help="Grand Prix / circuit name alias (e.g. 'abu dhabi', 'silverstone')")
+    parser.add_argument("--session", type=int, default=None, help="OpenF1 session key (e.g. 9662 for Abu Dhabi, 9558 for Silverstone, 11731 for Sepang)")
+    parser.add_argument("--race", type=str, default=None, help="Grand Prix / circuit name alias (e.g. 'abu dhabi', 'silverstone', 'sepang')")
+    parser.add_argument("--live", action="store_true", help="Stream from live race session instead of historical replay")
     parser.add_argument("--speed", type=float, default=1.0, help="Playback speed multiplier (1x-10x)")
     parser.add_argument("--driver", type=parse_driver_arg, default=44, help="Driver number or comma-separated list of drivers (default 44)")
     parser.add_argument("--drivers", type=str, default=None, help="Comma-separated list of driver numbers (e.g. '44,1')")
@@ -56,6 +58,8 @@ async def main():
         session_key = args.session
         if session_key == 9662:
             circuit_name = "Yas Marina Circuit"
+        elif session_key in (11730, 11731):
+            circuit_name = "Kuala Lumpur"
         elif session_key == 9558:
             circuit_name = "Silverstone"
         elif session_key == 9538:
@@ -69,6 +73,9 @@ async def main():
         if "abu" in clean_race or "yas" in clean_race:
             session_key = 9662
             circuit_name = "Yas Marina Circuit"
+        elif "sepang" in clean_race or "kuala" in clean_race or "malaysia" in clean_race:
+            session_key = 11731
+            circuit_name = "Kuala Lumpur"
         elif "silverstone" in clean_race:
             session_key = 9558
             circuit_name = "Silverstone"
@@ -116,20 +123,31 @@ async def main():
         print(f"[PitWatch AI] Warning: Failed to load driver metadata/stints: {e}")
         target_drivers = [44]
 
-    lap_msg = f"Lap #{args.lap}" if args.lap > 0 else "Pre-Race"
     driver_str = ", ".join(f"#{d}" for d in target_drivers)
-    print(f"[PitWatch AI] Initializing Historical Replay for Session {session_key} ({circuit_name}), Year {args.year}, Driver(s) {driver_str} starting at {lap_msg} ({args.speed}x)...")
 
-    source = await HistoricalReplaySource.from_openf1(
-        session_key=session_key,
-        driver_number=target_drivers,
-        client=client,
-        time_step=0.2,
-        start_lap=start_lap,
-    )
-    source.bind_state(state)
-    source.controller.set_speed(args.speed)
-    source.controller.play()
+    if args.live:
+        print(f"[PitWatch AI] Initializing Live Session Polling for Session {session_key} ({circuit_name}), Driver(s) {driver_str} (400ms cadence)...")
+        source = LiveOpenF1Source(
+            session_key=session_key,
+            driver_numbers=target_drivers,
+            client=client,
+            poll_interval_seconds=0.4,
+        )
+        source.bind_state(state)
+    else:
+        lap_msg = f"Lap #{args.lap}" if args.lap > 0 else "Pre-Race"
+        print(f"[PitWatch AI] Initializing Historical Replay for Session {session_key} ({circuit_name}), Year {args.year}, Driver(s) {driver_str} starting at {lap_msg} ({args.speed}x)...")
+
+        source = await HistoricalReplaySource.from_openf1(
+            session_key=session_key,
+            driver_number=target_drivers,
+            client=client,
+            time_step=0.2,
+            start_lap=start_lap,
+        )
+        source.bind_state(state)
+        source.controller.set_speed(args.speed)
+        source.controller.play()
 
     if args.serve:
         app = create_app(session_state=state)
@@ -141,8 +159,16 @@ async def main():
         # Run background replay and uvicorn concurrently
         print(f"[PitWatch AI] Starting FastAPI Server on http://{args.host}:{args.port}...")
         replay_task = asyncio.create_task(stream_background())
-        await run_server(app, args.host, args.port)
-        await replay_task
+        try:
+            await run_server(app, args.host, args.port)
+        finally:
+            if hasattr(source, "stop"):
+                source.stop()
+            replay_task.cancel()
+            try:
+                await replay_task
+            except asyncio.CancelledError:
+                pass
     else:
         count = 0
         async for frame in source.stream_frames():

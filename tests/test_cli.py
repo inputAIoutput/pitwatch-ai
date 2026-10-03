@@ -33,3 +33,11 @@ def test_cli_race_and_session_argument_parsing():
     assert args.race == "abu dhabi"
     assert args.session == 9662
 
+
+def test_cli_live_flag_parsing():
+    args = parse_args(["--live", "--session", "11731", "--race", "sepang"])
+    assert args.live is True
+    assert args.session == 11731
+    assert args.race == "sepang"
+
+
