@@ -79,3 +79,24 @@ async def test_openf1_stints_endpoint(tmp_path: Path):
     assert len(result) == 1
     assert result[0]["driver_number"] == 44
     assert result[0]["compound"] == "MEDIUM"
+
+
+@pytest.mark.asyncio
+async def test_openf1_positions_endpoint(tmp_path: Path):
+    client = OpenF1Client(cache_dir=str(tmp_path))
+    fake_positions = [
+        {
+            "session_key": 9558,
+            "driver_number": 4,
+            "date": "2024-07-07T14:03:31.000+00:00",
+            "position": 4,
+        }
+    ]
+    cache_file = tmp_path / "position_session_key-9558.json"
+    cache_file.write_text(json.dumps(fake_positions), encoding="utf-8")
+
+    result = await client.get_positions(session_key=9558)
+    assert len(result) == 1
+    assert result[0]["driver_number"] == 4
+    assert result[0]["position"] == 4
+

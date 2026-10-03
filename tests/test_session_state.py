@@ -227,3 +227,43 @@ def test_live_session_state_weather_evaluator_integration():
     assert updated_wx["recommended_compound"] == "INTERMEDIATE"
     assert updated_wx["active_alert"] is not None
 
+
+def test_load_positions_and_real_race_position_tracking():
+    state = LiveSessionState(session_key=9558, circuit_name="Silverstone")
+    state.load_drivers([
+        {"driver_number": 4, "name_acronym": "NOR", "team_name": "McLaren"},
+        {"driver_number": 81, "name_acronym": "PIA", "team_name": "McLaren"},
+    ])
+    positions_data = [
+        {"session_key": 9558, "driver_number": 4, "date": "2024-07-07T14:03:00+00:00", "position": 3},
+        {"session_key": 9558, "driver_number": 81, "date": "2024-07-07T14:03:00+00:00", "position": 5},
+        # Lap 1 transition: Norris drops to 4, Piastri drops to 6
+        {"session_key": 9558, "driver_number": 4, "date": "2024-07-07T14:04:30+00:00", "position": 4},
+        {"session_key": 9558, "driver_number": 81, "date": "2024-07-07T14:04:30+00:00", "position": 6},
+    ]
+    state.load_positions(positions_data)
+
+    assert state.drivers[4].current_position == 3
+    assert state.drivers[81].current_position == 5
+
+    # Ingest frame at 14:05:00
+    frame = ReplayFrame(
+        session_time=120.0,
+        timestamp=datetime(2024, 7, 7, 14, 5, 0, tzinfo=timezone.utc),
+        positions=[
+            CarPositionTick(driver_number=4, x=100.0, y=100.0, progress=0.85),
+            CarPositionTick(driver_number=81, x=80.0, y=80.0, progress=0.80),
+        ],
+    )
+    state.ingest_frame(frame)
+
+    assert state.drivers[4].current_position == 4
+    assert state.drivers[81].current_position == 6
+
+    summary = state.get_session_summary()
+    assert summary["drivers"][0]["driver_code"] == "NOR"
+    assert summary["drivers"][0]["current_position"] == 4
+    assert summary["drivers"][1]["driver_code"] == "PIA"
+    assert summary["drivers"][1]["current_position"] == 6
+
+

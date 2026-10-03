@@ -101,6 +101,11 @@ async def main():
         state.load_drivers(drivers_raw, active_driver_numbers=target_drivers)
         stints_raw = await client.get_stints(session_key=session_key)
         state.load_stints(stints_raw)
+        try:
+            positions_raw = await client.get_positions(session_key=session_key)
+            state.load_positions(positions_raw)
+        except Exception:
+            pass
         for drv_id in target_drivers:
             try:
                 laps_raw = await client.get_laps(session_key=session_key, driver_number=drv_id)

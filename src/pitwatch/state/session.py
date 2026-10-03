@@ -32,6 +32,7 @@ class LiveSessionState:
         self.drivers_meta_lookup: Dict[int, dict] = {}
         self.stints_by_driver: Dict[int, List[dict]] = {}
         self.laps_by_driver: Dict[int, List[dict]] = {}
+        self.positions_by_driver: Dict[int, List[dict]] = {}
 
     def register_driver(
         self,
@@ -46,6 +47,11 @@ class LiveSessionState:
             resolved_code = meta.get("driver_code") if driver_code == "DRV" else driver_code
             resolved_team = meta.get("team_name") if (team_name is None or team_name == "Unknown") else team_name
             resolved_colour = meta.get("team_colour") if team_colour is None else team_colour
+            pos = (
+                self.positions_by_driver[driver_number][0]["position"]
+                if (driver_number in self.positions_by_driver and self.positions_by_driver[driver_number])
+                else (grid_position or 1)
+            )
             self.drivers[driver_number] = DriverState(
                 driver_number=driver_number,
                 driver_code=resolved_code or driver_code,
@@ -53,8 +59,32 @@ class LiveSessionState:
                 team_colour=resolved_colour,
                 grid_position=grid_position,
             )
+            self.drivers[driver_number].current_position = pos
             self._apply_stint_for_driver(driver_number)
         return self.drivers[driver_number]
+
+    def load_positions(self, positions_data: List[dict]) -> None:
+        """Loads official real-time race position transitions per driver."""
+        self.positions_by_driver = {}
+        for p in positions_data:
+            drv = int(p.get("driver_number", 0))
+            if drv <= 0 or "date" not in p or p.get("position") is None:
+                continue
+            if drv not in self.positions_by_driver:
+                self.positions_by_driver[drv] = []
+
+            dt = datetime.fromisoformat(p["date"])
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            self.positions_by_driver[drv].append({
+                "date": dt,
+                "timestamp": dt.timestamp(),
+                "position": int(p["position"]),
+            })
+        for drv, p_list in self.positions_by_driver.items():
+            p_list.sort(key=lambda x: x["timestamp"])
+            if drv in self.drivers and p_list:
+                self.drivers[drv].current_position = p_list[0]["position"]
 
     def load_drivers(self, drivers_data: List[dict], active_driver_numbers: Optional[List[int]] = None) -> None:
         """Loads driver metadata (name acronym, team name, team colour) and registers them.
@@ -188,6 +218,16 @@ class LiveSessionState:
                     drv.current_lap = laps[0]["lap_number"]
                 self._apply_stint_for_driver(drv_num)
 
+        # Update official race positions if available
+        if frame.timestamp is not None and self.positions_by_driver:
+            frame_ts = frame.timestamp.timestamp()
+            for drv_num, drv in self.drivers.items():
+                pos_list = self.positions_by_driver.get(drv_num, [])
+                if pos_list:
+                    applicable = [p for p in pos_list if p["timestamp"] <= frame_ts]
+                    if applicable:
+                        drv.current_position = applicable[-1]["position"]
+
         self._recalculate_leaderboard()
 
     def _recalculate_leaderboard(self) -> None:
@@ -200,14 +240,18 @@ class LiveSessionState:
             prog = d.latest_position.progress if d.latest_position and d.latest_position.progress is not None else 0.0
             return (d.current_lap, prog)
 
-        sorted_drivers = sorted(active_drivers, key=sort_key, reverse=True)
+        if self.positions_by_driver:
+            sorted_drivers = sorted(active_drivers, key=lambda d: d.current_position)
+        else:
+            sorted_drivers = sorted(active_drivers, key=sort_key, reverse=True)
 
         leader_progress = sort_key(sorted_drivers[0])[1] if sorted_drivers else 0.0
         prev_progress = leader_progress
 
         updated_entries: List[LeaderboardEntry] = []
         for i, drv in enumerate(sorted_drivers):
-            drv.current_position = i + 1
+            if not self.positions_by_driver:
+                drv.current_position = i + 1
             curr_progress = sort_key(drv)[1]
 
             LAP_TIME_ESTIMATE = 90.0
