@@ -105,3 +105,17 @@ class CurrentWeatherResponse(BaseModel):
     recommended_compound: str
     active_alert: Optional[CrossoverAlertSchema] = None
 
+
+from pitwatch.strategy.engine import (
+    UndercutThreatLevel,
+    UndercutAssessment,
+    RejoinClearance,
+    CompetitorThreatSnapshot,
+    ThreatMatrixResponse,
+)
+from pitwatch.strategy.pirelli import (
+    StintPlan,
+    RecommendedStrategy,
+    CircuitStrategyConfig,
+)
+

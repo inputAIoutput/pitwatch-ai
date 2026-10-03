@@ -1,7 +1,7 @@
 from typing import Optional
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from pitwatch.api.routes import session, telemetry, stream, weather
+from pitwatch.api.routes import session, telemetry, stream, weather, strategy
 from pitwatch.state.session import LiveSessionState
 
 
@@ -31,5 +31,6 @@ def create_app(session_state: Optional[LiveSessionState] = None) -> FastAPI:
     app.include_router(telemetry.router)
     app.include_router(stream.router)
     app.include_router(weather.router)
+    app.include_router(strategy.router)
 
     return app

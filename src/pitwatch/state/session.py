@@ -4,6 +4,7 @@ from pitwatch.models.frame import ReplayFrame, WeatherTick
 from pitwatch.state.driver import DriverState, LeaderboardEntry
 from pitwatch.state.geometry import CoordinateNormalizer, CircuitBounds
 from pitwatch.intelligence.weather import EnvironmentalEvaluator
+from pitwatch.strategy.engine import DeterministicStrategyEngine
 
 
 class LiveSessionState:
@@ -25,6 +26,7 @@ class LiveSessionState:
         self.drivers: Dict[int, DriverState] = {}
         self.weather: Optional[WeatherTick] = None
         self.weather_evaluator = EnvironmentalEvaluator()
+        self.strategy_engine = DeterministicStrategyEngine(circuit_name=circuit_name)
         self.current_session_time: float = 0.0
         self.leaderboard: List[LeaderboardEntry] = []
         self.drivers_meta_lookup: Dict[int, dict] = {}
@@ -366,6 +368,60 @@ class LiveSessionState:
             "crossover_status": self.weather_evaluator.crossover_status.value,
             "recommended_compound": self.weather_evaluator.recommended_compound,
             "active_alert": alert.model_dump() if alert else None,
+        }
+
+    def get_threat_matrix(self) -> dict:
+        ordered = []
+        if self.leaderboard:
+            for entry in self.leaderboard:
+                drv = self.drivers.get(entry.driver_number)
+                if drv:
+                    ordered.append((drv, entry.position, entry.interval_ahead, entry.gap_to_leader))
+        else:
+            for i, drv_num in enumerate(sorted(self.drivers.keys())):
+                drv = self.drivers[drv_num]
+                pos = drv.current_position if drv.current_position > 0 else (i + 1)
+                ordered.append((drv, pos, drv.interval_ahead, drv.gap_to_leader))
+
+        competitors = []
+        track_temp = self.weather.track_temperature if self.weather else 32.0
+
+        for i, (drv, pos, interval_ahead, gap_to_leader) in enumerate(ordered):
+            threat = None
+            if i < len(ordered) - 1:
+                chaser_drv, chaser_pos, chaser_interval, chaser_gap = ordered[i + 1]
+                gap = chaser_interval if chaser_interval > 0 else max(0.0, chaser_gap - gap_to_leader)
+                threat = self.strategy_engine.assess_undercut_threat(
+                    gap_to_chaser_seconds=gap,
+                    leader_tyre_age=drv.tyre_age_laps,
+                    leader_compound=drv.current_compound.value,
+                    track_temperature=track_temp,
+                ).model_dump()
+
+            clearance = self.strategy_engine.calculate_rejoin_clearance(
+                gap_to_rejoin_car=gap_to_leader + 25.0
+            ).model_dump()
+
+            competitors.append({
+                "driver_number": drv.driver_number,
+                "driver_code": drv.driver_code,
+                "position": pos,
+                "interval_ahead": interval_ahead,
+                "gap_to_leader": gap_to_leader,
+                "tyre_compound": drv.current_compound.value,
+                "tyre_age_laps": drv.tyre_age_laps,
+                "undercut_threat": threat,
+                "pit_window_clearance": clearance,
+            })
+
+        curr_lap = max((d.current_lap for d in self.drivers.values()), default=1)
+        return {
+            "session_key": self.session_key,
+            "circuit_name": self.circuit_name,
+            "pit_transit_loss_seconds": self.strategy_engine.pit_loss,
+            "current_lap": curr_lap,
+            "total_laps": self.strategy_engine.total_laps,
+            "competitors": competitors,
         }
 
 
