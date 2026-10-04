@@ -98,3 +98,92 @@ def test_livef1_auth_token_resolution(monkeypatch):
     src3 = LiveF1Source(f1_cookie=cookie_sample)
     assert src3.resolve_auth_token() == "eyJhbGciOiJSUzI1NiJ9.abc.def"
 
+
+def test_livef1_timing_data_and_lap_count_ingestion():
+    source = LiveF1Source(session_key=11731)
+    state = LiveSessionState(session_key=11731, circuit_name="Kuala Lumpur")
+    source.bind_state(state)
+
+    records = {
+        "LapCount": [{"CurrentLap": 7, "TotalLaps": 55}],
+        "TimingData": [
+            {
+                "Lines": {
+                    "12": {
+                        "Position": "1",
+                        "GapToLeader": "LAP 7",
+                        "IntervalToPositionAhead": {"Value": "LAP 7"},
+                        "NumberOfLaps": 7,
+                        "LastLapTime": {"Value": "1:50.297"},
+                    },
+                    "3": {
+                        "Position": "2",
+                        "GapToLeader": "",
+                        "IntervalToPositionAhead": {"Value": "+2.438"},
+                        "NumberOfLaps": 7,
+                        "LastLapTime": {"Value": "1:50.519"},
+                    },
+                    "63": {
+                        "Position": "3",
+                        "GapToLeader": "+3.555",
+                        "IntervalToPositionAhead": {"Value": "+1.117"},
+                        "NumberOfLaps": 7,
+                        "LastLapTime": {"Value": "1:51.320"},
+                    },
+                }
+            }
+        ],
+    }
+
+    frame = source.process_records_batch(records)
+    assert frame is not None
+
+    # Check state drivers
+    assert state.current_lap == 7
+    assert state.total_laps == 55
+
+    # Check Antonelli P1
+    ant = state.drivers[12]
+    assert ant.current_position == 1
+    assert ant.gap_to_leader == 0.0
+    assert ant.interval_ahead == 0.0
+    assert ant.last_lap_time == 110.297
+    assert ant.current_lap == 7
+
+    # Check Verstappen P2
+    ver = state.drivers[3]
+    assert ver.current_position == 2
+    assert ver.interval_ahead == 2.438
+    assert ver.gap_to_leader == 2.438
+    assert ver.last_lap_time == 110.519
+    assert ver.current_lap == 7
+
+    # Check Russell P3
+    rus = state.drivers[63]
+    assert rus.current_position == 3
+    assert rus.gap_to_leader == 3.555
+    assert rus.interval_ahead == 1.117
+    assert rus.last_lap_time == 111.32
+
+    # Check session summary
+    summary = state.get_session_summary()
+    assert summary["current_lap"] == 7
+    assert summary["total_laps"] == 55
+    assert summary["drivers"][0]["driver_code"] == "ANT"
+    assert summary["drivers"][0]["current_position"] == 1
+    assert summary["drivers"][1]["driver_code"] == "VER"
+    assert summary["drivers"][1]["current_position"] == 2
+    assert summary["drivers"][1]["gap_to_leader"] == 2.438
+    assert summary["drivers"][1]["interval_ahead"] == 2.438
+    assert summary["drivers"][1]["last_lap_time"] == 110.519
+
+    # Check live telemetry snapshot
+    snap = state.get_live_telemetry_snapshot()
+    assert snap["vehicles"][0]["driver_code"] == "ANT"
+    assert snap["vehicles"][0]["position"] == 1
+    assert snap["vehicles"][1]["driver_code"] == "VER"
+    assert snap["vehicles"][1]["position"] == 2
+    assert snap["vehicles"][1]["gap_to_leader"] == 2.438
+    assert snap["vehicles"][1]["interval_ahead"] == 2.438
+
+

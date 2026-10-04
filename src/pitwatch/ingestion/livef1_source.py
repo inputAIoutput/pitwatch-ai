@@ -47,6 +47,7 @@ class LiveF1Source:
         "CurrentTyres",
         "TimingData",
         "TimingAppData",
+        "LapCount",
     ]
 
     def __init__(
@@ -271,6 +272,26 @@ class LiveF1Source:
                                     self.state.register_driver(driver_number=num)
                                     self.state.drivers[num].set_compound(cmp)
 
+        # 10. Parse Lap Count (LapCount)
+        lap_count_list = records.get("LapCount", [])
+        if self.state and lap_count_list:
+            for lc in lap_count_list:
+                if isinstance(lc, dict):
+                    self.state.update_lap_count(lc)
+
+        # 11. Parse Timing Data (TimingData)
+        timing_list = records.get("TimingData", [])
+        if self.state and timing_list:
+            for item in timing_list:
+                if isinstance(item, dict):
+                    if "DriverNo" in item or "RacingNumber" in item:
+                        self.state.update_timing_record(item)
+                    elif "Lines" in item and isinstance(item["Lines"], dict):
+                        for d_no, l_data in item["Lines"].items():
+                            if isinstance(l_data, dict):
+                                self.state.update_timing_line(str(d_no), l_data)
+            self.state._recalculate_leaderboard()
+
         # 5. Parse Team Radio (TeamRadio)
         radio_list = records.get("TeamRadio", [])
         if radio_list:
@@ -459,7 +480,7 @@ class LiveF1Source:
                                 tyres.append({"DriverNo": k, "Compound": v.get("Compound")})
                 if tyres:
                     loop.call_soon_threadsafe(self.enqueue_batch, {topic: tyres})
-            elif topic in ("TrackStatus", "TimingAppData"):
+            elif topic in ("TrackStatus", "TimingAppData", "TimingData", "LapCount"):
                 if isinstance(payload, dict):
                     loop.call_soon_threadsafe(self.enqueue_batch, {topic: [payload]})
                 elif isinstance(payload, list):

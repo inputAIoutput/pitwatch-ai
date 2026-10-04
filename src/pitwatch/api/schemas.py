@@ -13,6 +13,8 @@ class DriverMeta(BaseModel):
     current_compound: str = "WET"
     tyre_age_laps: int = 0
     last_lap_time: Optional[float] = None
+    gap_to_leader: float = 0.0
+    interval_ahead: float = 0.0
 
 
 class SessionCurrentResponse(BaseModel):
