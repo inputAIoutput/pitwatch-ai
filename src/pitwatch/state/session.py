@@ -143,15 +143,65 @@ class LiveSessionState:
 
     def add_race_control_message(self, rcm: dict) -> None:
         """Appends race control message and evaluates it against weather/track conditions."""
-        self.race_control_messages.append(rcm)
-        self.weather_evaluator.record_race_control(rcm, self.current_session_time)
+        msg_dict = dict(rcm)
+        if "session_time" not in msg_dict:
+            msg_dict["session_time"] = self.current_session_time
+
+        msg_text = str(rcm.get("Message") or rcm.get("message") or "")
+        cat_text = rcm.get("Category") or rcm.get("category")
+        flag_text = rcm.get("Flag") or rcm.get("flag")
+        scope_text = rcm.get("Scope") or rcm.get("scope")
+        status_text = rcm.get("Status") or rcm.get("status")
+        utc_text = rcm.get("Utc") or rcm.get("utc")
+        lap_val = rcm.get("Lap") if "Lap" in rcm else rcm.get("lap")
+
+        msg_dict["message"] = msg_text
+        if cat_text:
+            msg_dict["category"] = cat_text
+        if flag_text:
+            msg_dict["flag"] = flag_text
+        if scope_text:
+            msg_dict["scope"] = scope_text
+        if status_text:
+            msg_dict["status"] = status_text
+        if utc_text:
+            msg_dict["utc"] = utc_text
+        if lap_val is not None:
+            msg_dict["lap"] = lap_val
+
+        self.race_control_messages.append(msg_dict)
+        self.weather_evaluator.record_race_control(msg_dict, self.current_session_time)
 
         # Detect Overtake / DRS enabling / disabling from race director
-        msg = str(rcm.get("Message", "")).upper()
-        if "OVERTAKE ENABLED" in msg or "DRS ENABLED" in msg:
+        msg_upper = msg_text.upper()
+        if "OVERTAKE ENABLED" in msg_upper or "DRS ENABLED" in msg_upper:
             self.overtake_enabled = True
-        elif "OVERTAKE DISABLED" in msg or "DRS DISABLED" in msg:
+        elif "OVERTAKE DISABLED" in msg_upper or "DRS DISABLED" in msg_upper:
             self.overtake_enabled = False
+
+    def get_race_control_messages(
+        self,
+        category: Optional[str] = None,
+        flag: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[dict]:
+        """Returns chronological list of race control messages up to the current session time."""
+        msgs = self.race_control_messages
+        if category:
+            cat_upper = category.upper()
+            msgs = [
+                m for m in msgs
+                if str(m.get("Category") or m.get("category", "")).upper() == cat_upper
+            ]
+        if flag:
+            flag_upper = flag.upper()
+            msgs = [
+                m for m in msgs
+                if str(m.get("Flag") or m.get("flag", "")).upper() == flag_upper
+            ]
+        if limit and limit > 0:
+            return msgs[-limit:]
+        return list(msgs)
 
     def update_timing_app_data(self, timing_app_data: dict) -> None:
         """Update tyre compound and accurate tyre age (TotalLaps / StartLaps) from TimingAppData."""
@@ -655,6 +705,23 @@ class LiveSessionState:
                 session_time=frame.session_time,
                 timestamp=frame.timestamp,
             )
+
+        # Ingest timing app data (stints & compounds)
+        if getattr(frame, "timing_app_data", None):
+            self.update_timing_app_data(frame.timing_app_data)
+
+        # Ingest timing data lines (positions, gaps, intervals, lap times)
+        if getattr(frame, "timing_data", None):
+            lines = frame.timing_data.get("Lines", {})
+            if isinstance(lines, dict):
+                for d_no, l_data in lines.items():
+                    if isinstance(l_data, dict):
+                        self.update_timing_line(d_no, l_data)
+
+        # Ingest race control messages
+        if getattr(frame, "race_control_messages", None):
+            for rcm in frame.race_control_messages:
+                self.add_race_control_message(rcm)
 
         # Ingest positions
         for pos in frame.positions:

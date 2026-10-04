@@ -120,6 +120,26 @@ class CurrentWeatherResponse(BaseModel):
     active_alert: Optional[CrossoverAlertSchema] = None
 
 
+class RaceControlMessageSchema(BaseModel):
+    session_time: Optional[float] = None
+    utc: Optional[str] = None
+    lap: Optional[int] = None
+    category: Optional[str] = None
+    flag: Optional[str] = None
+    scope: Optional[str] = None
+    status: Optional[str] = None
+    message: str = ""
+
+    model_config = {"extra": "allow"}
+
+
+class RaceControlMessagesResponse(BaseModel):
+    session_key: int
+    current_session_time: float
+    total_messages: int
+    messages: List[RaceControlMessageSchema]
+
+
 from pitwatch.strategy.engine import (
     UndercutThreatLevel,
     UndercutAssessment,

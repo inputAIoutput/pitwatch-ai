@@ -129,3 +129,63 @@ def test_get_session_current_includes_fastest_lap_and_formatted_strings(populate
     assert ham["gap_to_leader_formatted"] == "LEADER"
     assert ham["interval_ahead_formatted"] == "-"
 
+
+def test_get_session_race_control_endpoints(populated_state):
+    # Add race control messages
+    populated_state.add_race_control_message({
+        "Utc": "2024-07-07T14:15:00",
+        "Category": "Flag",
+        "Flag": "YELLOW",
+        "Message": "YELLOW FLAG IN SECTOR 2",
+        "Scope": "Sector",
+    })
+    populated_state.add_race_control_message({
+        "Utc": "2024-07-07T14:18:00",
+        "Category": "Drs",
+        "Message": "DRS ENABLED",
+    })
+    populated_state.add_race_control_message({
+        "Utc": "2024-07-07T14:22:00",
+        "Category": "Flag",
+        "Flag": "GREEN",
+        "Message": "CLEAR IN SECTOR 2",
+        "Scope": "Sector",
+    })
+
+    app = create_app(session_state=populated_state)
+    client = TestClient(app)
+
+    # 1. GET /v1/session/race-control (all messages)
+    res_all = client.get("/v1/session/race-control")
+    assert res_all.status_code == 200
+    data_all = res_all.json()
+    assert data_all["session_key"] == 9558
+    assert data_all["total_messages"] >= 3
+    msgs = data_all["messages"]
+    assert any("YELLOW FLAG" in m["message"] for m in msgs)
+    assert any("DRS ENABLED" in m["message"] for m in msgs)
+
+    # 2. Filter by category
+    res_flags = client.get("/v1/session/race-control?category=Flag")
+    assert res_flags.status_code == 200
+    data_flags = res_flags.json()
+    assert all(m["category"] == "Flag" for m in data_flags["messages"])
+
+    # 3. Filter by flag
+    res_yellow = client.get("/v1/session/race-control?flag=YELLOW")
+    assert res_yellow.status_code == 200
+    data_yellow = res_yellow.json()
+    assert len(data_yellow["messages"]) == 1
+    assert data_yellow["messages"][0]["flag"] == "YELLOW"
+
+    # 4. Limit parameter
+    res_limit = client.get("/v1/session/race-control?limit=2")
+    assert res_limit.status_code == 200
+    assert len(res_limit.json()["messages"]) == 2
+
+    # 5. Alias /v1/session/messages
+    res_alias = client.get("/v1/session/messages")
+    assert res_alias.status_code == 200
+    assert res_alias.json()["total_messages"] == data_all["total_messages"]
+
+

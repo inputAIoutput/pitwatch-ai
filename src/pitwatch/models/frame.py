@@ -45,3 +45,6 @@ class ReplayFrame(BaseModel):
     telemetry: List[TelemetryTick] = Field(default_factory=list)
     weather: Optional[WeatherTick] = None
     radio_events: List[RadioEventTick] = Field(default_factory=list)
+    race_control_messages: List[dict] = Field(default_factory=list)
+    timing_data: Optional[dict] = None
+    timing_app_data: Optional[dict] = None

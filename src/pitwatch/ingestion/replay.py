@@ -45,6 +45,12 @@ class HistoricalReplaySource(SessionSource):
                 break
         else:
             idx = len(self.frames) - 1 if self.frames else 0
+
+        # Fast-forward bound state up to target frame so state is synchronized
+        if self.state is not None and idx > self._current_index:
+            for f in self.frames[self._current_index:idx]:
+                self.state.ingest_frame(f)
+
         self._current_index = idx
 
     def bind_state(self, state) -> None:
@@ -53,6 +59,9 @@ class HistoricalReplaySource(SessionSource):
             state.update_session_info(self.session_info)
         if hasattr(self, "driver_list") and self.driver_list and hasattr(state, "update_driver_list"):
             state.update_driver_list(self.driver_list)
+        if self._current_index > 0:
+            for f in self.frames[:self._current_index]:
+                state.ingest_frame(f)
 
     @classmethod
     def from_frames(cls, frames: List[ReplayFrame], time_step: float = 0.2) -> "HistoricalReplaySource":
@@ -300,6 +309,18 @@ class HistoricalReplaySource(SessionSource):
         import base64
         import json
 
+        def _parse_session_time_prefix(line: str) -> float:
+            s = line.lstrip("\ufeff")
+            if len(s) >= 12 and s[2] == ":" and s[5] == ":":
+                try:
+                    h = int(s[0:2])
+                    m = int(s[3:5])
+                    sec = float(s[6:12])
+                    return round(h * 3600 + m * 60 + sec, 3)
+                except Exception:
+                    pass
+            return 0.0
+
         base_url = "https://livetiming.formula1.com/static/"
         if not session_path:
             # Discover session path from SessionInfo or default for Sepang/Bahrain 2026
@@ -356,14 +377,20 @@ class HistoricalReplaySource(SessionSource):
         weather_lines = _get_stream_lines("WeatherData.jsonStream")
         if not weather_lines:
             weather_lines = _get_stream_lines("WeatherDataSeries.jsonStream")
+        rcm_lines = _get_stream_lines("RaceControlMessages.jsonStream")
+        timing_data_lines = _get_stream_lines("TimingData.jsonStream")
+        timing_app_lines = _get_stream_lines("TimingAppData.jsonStream")
 
         # Parse WeatherData lines
-        parsed_weather: List[WeatherTick] = []
+        parsed_weather: List[Tuple[float, WeatherTick]] = []
         for w_line in weather_lines:
-            if len(w_line) > 12:
+            w_time = _parse_session_time_prefix(w_line)
+            idx = w_line.find("{")
+            if idx != -1:
                 try:
-                    w_obj = json.loads(w_line[12:])
-                    parsed_weather.append(
+                    w_obj = json.loads(w_line[idx:])
+                    parsed_weather.append((
+                        w_time,
                         WeatherTick(
                             track_temperature=float(w_obj.get("TrackTemp", 28.0)),
                             air_temperature=float(w_obj.get("AirTemp", 22.0)),
@@ -372,10 +399,58 @@ class HistoricalReplaySource(SessionSource):
                             wind_direction=int(float(w_obj.get("WindDirection", 0))),
                             humidity=float(w_obj.get("Humidity", 50.0)),
                             pressure=float(w_obj["Pressure"]) if "Pressure" in w_obj else None,
-                        )
-                    )
+                        ),
+                    ))
                 except Exception:
                     pass
+        parsed_weather.sort(key=lambda x: x[0])
+
+        # Parse RaceControlMessages lines
+        parsed_rcm: List[Tuple[float, dict]] = []
+        for r_line in rcm_lines:
+            r_time = _parse_session_time_prefix(r_line)
+            idx = r_line.find("{")
+            if idx != -1:
+                try:
+                    obj = json.loads(r_line[idx:])
+                    msgs = obj.get("Messages", [])
+                    msg_list = msgs if isinstance(msgs, list) else list(msgs.values())
+                    for m in msg_list:
+                        if isinstance(m, dict) and (m.get("Message") or m.get("message")):
+                            m_copy = dict(m)
+                            m_copy["session_time"] = r_time
+                            parsed_rcm.append((r_time, m_copy))
+                except Exception:
+                    pass
+        parsed_rcm.sort(key=lambda x: x[0])
+
+        # Parse TimingData lines
+        parsed_timing_data: List[Tuple[float, dict]] = []
+        for t_line in timing_data_lines:
+            t_time = _parse_session_time_prefix(t_line)
+            idx = t_line.find("{")
+            if idx != -1:
+                try:
+                    obj = json.loads(t_line[idx:])
+                    if "Lines" in obj and isinstance(obj["Lines"], dict):
+                        parsed_timing_data.append((t_time, obj))
+                except Exception:
+                    pass
+        parsed_timing_data.sort(key=lambda x: x[0])
+
+        # Parse TimingAppData lines
+        parsed_timing_app: List[Tuple[float, dict]] = []
+        for ta_line in timing_app_lines:
+            ta_time = _parse_session_time_prefix(ta_line)
+            idx = ta_line.find("{")
+            if idx != -1:
+                try:
+                    obj = json.loads(ta_line[idx:])
+                    if "Lines" in obj and isinstance(obj["Lines"], dict):
+                        parsed_timing_app.append((ta_time, obj))
+                except Exception:
+                    pass
+        parsed_timing_app.sort(key=lambda x: x[0])
 
         # Fallback to sample ticks if streams are unreachable
         if not car_data_lines:
@@ -388,16 +463,55 @@ class HistoricalReplaySource(SessionSource):
         frames: List[ReplayFrame] = []
         base_dt = datetime.now(timezone.utc)
 
-        current_weather_tick = parsed_weather[0] if parsed_weather else WeatherTick(track_temperature=28.0, air_temperature=22.0)
+        current_weather_tick = parsed_weather[0][1] if parsed_weather else WeatherTick(track_temperature=28.0, air_temperature=22.0)
+
+        wx_ptr = 0
+        rcm_ptr = 0
+        td_ptr = 0
+        ta_ptr = 0
 
         for i in range(total_lines):
-            session_time = round(i * time_step, 3)
+            t_car = _parse_session_time_prefix(car_data_lines[i]) if i < len(car_data_lines) else 0.0
+            t_pos = _parse_session_time_prefix(pos_lines[i]) if i < len(pos_lines) else 0.0
+            session_time = t_car or t_pos or round(i * time_step, 3)
             frame_dt = datetime.fromtimestamp(base_dt.timestamp() + session_time, tz=timezone.utc)
 
-            # Advance weather tick proportionally if multiple available
-            if parsed_weather:
-                w_idx = min(len(parsed_weather) - 1, int((i / max(1, total_lines)) * len(parsed_weather)))
-                current_weather_tick = parsed_weather[w_idx]
+            # Advance weather tick
+            while wx_ptr < len(parsed_weather) and parsed_weather[wx_ptr][0] <= session_time:
+                current_weather_tick = parsed_weather[wx_ptr][1]
+                wx_ptr += 1
+
+            # Advance race control messages
+            frame_rcm: List[dict] = []
+            while rcm_ptr < len(parsed_rcm) and parsed_rcm[rcm_ptr][0] <= session_time:
+                frame_rcm.append(parsed_rcm[rcm_ptr][1])
+                rcm_ptr += 1
+
+            # Merge TimingData micro-updates
+            frame_td = None
+            merged_td: dict = {}
+            while td_ptr < len(parsed_timing_data) and parsed_timing_data[td_ptr][0] <= session_time:
+                for k, v in parsed_timing_data[td_ptr][1].get("Lines", {}).items():
+                    if k not in merged_td:
+                        merged_td[k] = {}
+                    if isinstance(v, dict):
+                        merged_td[k].update(v)
+                td_ptr += 1
+            if merged_td:
+                frame_td = {"Lines": merged_td}
+
+            # Merge TimingAppData micro-updates
+            frame_ta = None
+            merged_ta: dict = {}
+            while ta_ptr < len(parsed_timing_app) and parsed_timing_app[ta_ptr][0] <= session_time:
+                for k, v in parsed_timing_app[ta_ptr][1].get("Lines", {}).items():
+                    if k not in merged_ta:
+                        merged_ta[k] = {}
+                    if isinstance(v, dict):
+                        merged_ta[k].update(v)
+                ta_ptr += 1
+            if merged_ta:
+                frame_ta = {"Lines": merged_ta}
 
             tel_ticks: List[TelemetryTick] = []
             pos_ticks: List[CarPositionTick] = []
@@ -405,9 +519,10 @@ class HistoricalReplaySource(SessionSource):
             # Parse CarData.z line
             if i < len(car_data_lines):
                 c_line = car_data_lines[i]
-                if len(c_line) > 12:
+                q_idx = c_line.find('"')
+                if q_idx != -1:
                     try:
-                        raw_b64 = json.loads(c_line[12:])
+                        raw_b64 = json.loads(c_line[q_idx:])
                         decomp = zlib.decompress(base64.b64decode(raw_b64), -zlib.MAX_WBITS)
                         payload = json.loads(decomp.decode("utf-8-sig"))
                         for entry in payload.get("Entries", []):
@@ -418,22 +533,15 @@ class HistoricalReplaySource(SessionSource):
                                 if d_num >= 100 or (driver_list and d_num not in driver_list):
                                     continue
                                 ch = car_obj.get("Channels", {})
-                                rpm_val = int(ch.get("0", 0))
-                                spd_val = int(ch.get("2", 0))
-                                gear_val = int(ch.get("3", 0))
-                                thr_val = int(ch.get("4", 0))
-                                brk_val = int(ch.get("5", 0))
-                                drs_val = int(ch.get("45", 0))
-
                                 tel_ticks.append(
                                     TelemetryTick(
                                         driver_number=d_num,
-                                        speed=spd_val,
-                                        rpm=rpm_val,
-                                        throttle=thr_val,
-                                        brake=brk_val,
-                                        gear=gear_val,
-                                        drs=drs_val,
+                                        speed=int(ch.get("2", 0)),
+                                        rpm=int(ch.get("0", 0)),
+                                        throttle=int(ch.get("4", 0)),
+                                        brake=int(ch.get("5", 0)),
+                                        gear=int(ch.get("3", 0)),
+                                        drs=int(ch.get("45", 0)),
                                     )
                                 )
                     except Exception:
@@ -442,15 +550,17 @@ class HistoricalReplaySource(SessionSource):
             # Parse Position.z line
             if i < len(pos_lines):
                 p_line = pos_lines[i]
-                if len(p_line) > 12:
+                q_idx = p_line.find('"')
+                if q_idx != -1:
                     try:
-                        raw_b64 = json.loads(p_line[12:])
+                        raw_b64 = json.loads(p_line[q_idx:])
                         decomp = zlib.decompress(base64.b64decode(raw_b64), -zlib.MAX_WBITS)
                         payload = json.loads(decomp.decode("utf-8-sig"))
                         for entry in payload.get("Position", []):
-                            for entry_data in entry.get("Entries", {}).values():
-                                for d_str, p_obj in entry_data.get("Cars", {}).items():
-                                    if not d_str.isdigit():
+                            entries_dict = entry.get("Entries", {})
+                            if isinstance(entries_dict, dict):
+                                for d_str, p_obj in entries_dict.items():
+                                    if not str(d_str).isdigit() or not isinstance(p_obj, dict):
                                         continue
                                     d_num = int(d_str)
                                     if d_num >= 100 or (driver_list and d_num not in driver_list):
@@ -473,6 +583,9 @@ class HistoricalReplaySource(SessionSource):
                     positions=pos_ticks,
                     telemetry=tel_ticks,
                     weather=current_weather_tick,
+                    race_control_messages=frame_rcm,
+                    timing_data=frame_td,
+                    timing_app_data=frame_ta,
                 )
             )
 
