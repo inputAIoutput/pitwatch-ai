@@ -143,3 +143,31 @@ def test_drs_race_control_override_clears_wet_track():
     assert evaluator.crossover_status in (CrossoverStatus.DRY_OPTIMAL, CrossoverStatus.INTERMEDIATE_TO_SLICK)
     assert alert is not None
     assert "DRS ENABLED" in alert.message or "OVERTAKE" in alert.message
+
+
+def test_grid_slick_adoption_ratio_tracking():
+    evaluator = EnvironmentalEvaluator()
+    # Initial wet state
+    evaluator.is_track_declared_wet = True
+    evaluator.crossover_status = CrossoverStatus.WET_OPTIMAL
+    evaluator.recommended_compound = "WET"
+
+    w = WeatherTick(track_temperature=32.0, air_temperature=21.0, rainfall=0, humidity=60.0)
+    evaluator.record_weather(w, session_time=100.0)
+
+    # 1. 0% slicks (10 Inters, 10 Wet) -> remains wet
+    compounds_wet = ["INTERMEDIATE"] * 10 + ["WET"] * 10
+    alert = evaluator.update_grid_compounds(compounds_wet, session_time=120.0)
+    assert alert is None
+    assert evaluator.is_track_declared_wet is True
+    assert evaluator.slick_ratio == 0.0
+
+    # 2. 55% slicks (11 Medium, 9 Intermediate) -> triggers crossover to slicks (MEDIUM at 32°C)
+    compounds_drying = ["MEDIUM"] * 11 + ["INTERMEDIATE"] * 9
+    alert = evaluator.update_grid_compounds(compounds_drying, session_time=180.0)
+    assert alert is not None
+    assert evaluator.is_track_declared_wet is False
+    assert evaluator.slick_ratio == 0.55
+    assert evaluator.recommended_compound == "MEDIUM"
+    assert evaluator.crossover_status in (CrossoverStatus.DRY_OPTIMAL, CrossoverStatus.INTERMEDIATE_TO_SLICK)
+    assert "55.0%" in alert.message or "55%" in alert.message

@@ -2,7 +2,7 @@ from collections import deque
 from datetime import datetime, timezone
 from enum import Enum
 import math
-from typing import Deque, List, Optional, Tuple
+from typing import Any, Deque, List, Mapping, Optional, Sequence, Tuple, Union
 from pydantic import BaseModel
 from pitwatch.models.frame import WeatherTick
 
@@ -50,6 +50,7 @@ class EnvironmentalEvaluator:
         self._alert_counter: int = 0
         self.is_track_declared_wet: bool = False
         self.race_director_notice: Optional[str] = None
+        self.slick_ratio: float = 0.0
 
     @staticmethod
     def get_thermal_slick_recommendation(track_temperature: float) -> str:
@@ -190,6 +191,57 @@ class EnvironmentalEvaluator:
         ):
             self.is_track_declared_wet = False
             self.race_director_notice = None
+
+        return None
+
+    def update_grid_compounds(
+        self,
+        compounds: Union[Sequence[str], Mapping[Any, str]],
+        session_time: float,
+    ) -> Optional[CrossoverAlert]:
+        """Tracks the compound adoption ratio across the grid.
+        If >= 50% of the active grid pits onto slick tyres (SOFT, MEDIUM, HARD, SLICK),
+        it triggers a dry crossover transition and cancels wet track status.
+        """
+        raw_list = list(compounds.values()) if isinstance(compounds, Mapping) else list(compounds)
+        valid = [
+            str(c).upper()
+            for c in raw_list
+            if c and str(c).upper() not in ("UNKNOWN", "NONE", "")
+        ]
+
+        if not valid:
+            self.slick_ratio = 0.0
+            return None
+
+        slick_set = {"SOFT", "MEDIUM", "HARD", "SLICK"}
+        slicks = sum(1 for c in valid if c in slick_set)
+        self.slick_ratio = round(slicks / len(valid), 2)
+
+        if self.slick_ratio >= 0.50 and (
+            self.is_track_declared_wet or self.crossover_status != CrossoverStatus.DRY_OPTIMAL
+        ):
+            self.is_track_declared_wet = False
+            self.race_director_notice = None
+            t_track = self.history[-1].tick.track_temperature if self.history else 30.0
+            slick_rec = self.get_thermal_slick_recommendation(t_track)
+            self.recommended_compound = slick_rec
+            self.crossover_status = CrossoverStatus.DRY_OPTIMAL
+            self._alert_counter += 1
+            pct = self.slick_ratio * 100
+            self.active_alert = CrossoverAlert(
+                alert_id=f"GRID-{int(session_time)}-{self._alert_counter}",
+                timestamp=datetime.now(timezone.utc),
+                session_time=session_time,
+                severity="INFO",
+                transition=CrossoverStatus.DRY_OPTIMAL,
+                current_track_temp=t_track,
+                thermal_drift_rate=self.get_thermal_drift_rate(),
+                grip_loss_projection=self.project_tyre_grip_loss(),
+                recommended_compound=slick_rec,
+                message=f"GRID CROSSOVER: {pct:.1f}% of active cars on slicks. Track condition dry. Recommended compound: {slick_rec}.",
+            )
+            return self.active_alert
 
         return None
 
