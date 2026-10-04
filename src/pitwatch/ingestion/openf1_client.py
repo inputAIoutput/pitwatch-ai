@@ -4,15 +4,20 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 
+import os
+
 class OpenF1Client:
     """Client for OpenF1 REST API with automatic local JSON caching."""
 
     BASE_URL = "https://api.openf1.org/v1"
 
-    def __init__(self, cache_dir: str = "data/cache/openf1"):
+    def __init__(self, cache_dir: str = "data/cache/openf1", api_token: Optional[str] = None):
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.headers = {"User-Agent": "PitWatchAI/0.1.0"}
+        token = api_token or os.environ.get("OPENF1_TOKEN") or os.environ.get("OPENF1_API_KEY")
+        if token:
+            self.headers["Authorization"] = f"Bearer {token}"
 
     def _get_cache_path(self, endpoint: str, params: Dict[str, Any]) -> Path:
         sanitized_params = "_".join(f"{k}-{v}" for k, v in sorted(params.items()))
@@ -40,6 +45,10 @@ class OpenF1Client:
         url = f"{self.BASE_URL}/{endpoint}"
         async with httpx.AsyncClient(headers=self.headers, timeout=10.0) as client:
             response = await client.get(url, params=params)
+            if response.status_code == 401:
+                detail = response.json().get("detail", "Unauthorized") if response.headers.get("content-type", "").startswith("application/json") else response.text
+                print(f"[PitWatch AI] [WARN] OpenF1 Live Auth Required (401): {detail}")
+                return []
             response.raise_for_status()
             return response.json()
 

@@ -36,6 +36,7 @@ def parse_args(args=None):
     parser.add_argument("--frames", type=int, default=10, help="Number of frames to verify before stopping")
     parser.add_argument("--lap", type=int, default=1, help="Lap number to start replay from (default 1 for race start, 0 for pre-race garage)")
     parser.add_argument("--serve", action="store_true", help="Launch FastAPI REST & WebSocket server alongside replay")
+    parser.add_argument("--token", type=str, default=None, help="OpenF1 OAuth2 / Bearer access token for live session streaming")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="API server host")
     parser.add_argument("--port", type=int, default=8000, help="API server port")
     return parser.parse_args(args)
@@ -49,7 +50,7 @@ async def run_server(app, host: str, port: int):
 
 async def main():
     args = parse_args()
-    client = OpenF1Client()
+    client = OpenF1Client(api_token=args.token)
 
     session_key = 9558
     circuit_name = "Silverstone"

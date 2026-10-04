@@ -132,7 +132,7 @@
     "strategies": [
       {
         "strategy_id": "SEPANG_2STOP_M_H_H",
-        "name": "Pirelli Optimal (2-Stop High Thermal)",
+        "name": "Pirelli Optimal (2-Stop Medium-Hard-Hard)",
         "stops": 2,
         "is_fastest": true,
         "delta_seconds": 0.0,
@@ -144,12 +144,52 @@
         ]
       },
       {
+        "strategy_id": "SEPANG_2STOP_S_H_H",
+        "name": "Pirelli Alternative (2-Stop Soft-Hard-Hard)",
+        "stops": 2,
+        "is_fastest": false,
+        "delta_seconds": 2.1,
+        "pit_window": [10, 14],
+        "stints": [
+          {"stint_index": 1, "compound": "SOFT", "start_lap": 1, "end_lap": 12},
+          {"stint_index": 2, "compound": "HARD", "start_lap": 13, "end_lap": 34},
+          {"stint_index": 3, "compound": "HARD", "start_lap": 35, "end_lap": 56}
+        ]
+      },
+      {
+        "strategy_id": "SEPANG_3STOP_M_H_M_S",
+        "name": "Pirelli 3-Stop / 1 Hard Set (Verstappen & Leclerc Alternate)",
+        "stops": 3,
+        "is_fastest": false,
+        "delta_seconds": 3.8,
+        "pit_window": [12, 15],
+        "stints": [
+          {"stint_index": 1, "compound": "MEDIUM", "start_lap": 1, "end_lap": 13},
+          {"stint_index": 2, "compound": "HARD", "start_lap": 14, "end_lap": 30},
+          {"stint_index": 3, "compound": "MEDIUM", "start_lap": 31, "end_lap": 44},
+          {"stint_index": 4, "compound": "SOFT", "start_lap": 45, "end_lap": 56}
+        ]
+      },
+      {
+        "strategy_id": "SEPANG_WET_INTER_SLICK",
+        "name": "Pirelli Rain Contingency (Wet to Intermediate to Slick)",
+        "stops": 2,
+        "is_fastest": false,
+        "delta_seconds": 0.0,
+        "pit_window": [6, 12],
+        "stints": [
+          {"stint_index": 1, "compound": "WET", "start_lap": 1, "end_lap": 10},
+          {"stint_index": 2, "compound": "INTERMEDIATE", "start_lap": 11, "end_lap": 28},
+          {"stint_index": 3, "compound": "HARD", "start_lap": 29, "end_lap": 56}
+        ]
+      },
+      {
         "strategy_id": "SEPANG_1STOP_M_H",
-        "name": "Pirelli Alternative (1-Stop Conservation)",
+        "name": "Pirelli 1-Stop (Not Recommended - High Thermal Cliff)",
         "stops": 1,
         "is_fastest": false,
-        "delta_seconds": 6.2,
-        "pit_window": [20, 26],
+        "delta_seconds": 11.4,
+        "pit_window": [22, 28],
         "stints": [
           {"stint_index": 1, "compound": "MEDIUM", "start_lap": 1, "end_lap": 22},
           {"stint_index": 2, "compound": "HARD", "start_lap": 23, "end_lap": 56}
@@ -165,7 +205,7 @@
     "strategies": [
       {
         "strategy_id": "SEPANG_2STOP_M_H_H",
-        "name": "Pirelli Optimal (2-Stop High Thermal)",
+        "name": "Pirelli Optimal (2-Stop Medium-Hard-Hard)",
         "stops": 2,
         "is_fastest": true,
         "delta_seconds": 0.0,
@@ -174,6 +214,46 @@
           {"stint_index": 1, "compound": "MEDIUM", "start_lap": 1, "end_lap": 16},
           {"stint_index": 2, "compound": "HARD", "start_lap": 17, "end_lap": 36},
           {"stint_index": 3, "compound": "HARD", "start_lap": 37, "end_lap": 56}
+        ]
+      },
+      {
+        "strategy_id": "SEPANG_2STOP_S_H_H",
+        "name": "Pirelli Alternative (2-Stop Soft-Hard-Hard)",
+        "stops": 2,
+        "is_fastest": false,
+        "delta_seconds": 2.1,
+        "pit_window": [10, 14],
+        "stints": [
+          {"stint_index": 1, "compound": "SOFT", "start_lap": 1, "end_lap": 12},
+          {"stint_index": 2, "compound": "HARD", "start_lap": 13, "end_lap": 34},
+          {"stint_index": 3, "compound": "HARD", "start_lap": 35, "end_lap": 56}
+        ]
+      },
+      {
+        "strategy_id": "SEPANG_3STOP_M_H_M_S",
+        "name": "Pirelli 3-Stop / 1 Hard Set (Verstappen & Leclerc Alternate)",
+        "stops": 3,
+        "is_fastest": false,
+        "delta_seconds": 3.8,
+        "pit_window": [12, 15],
+        "stints": [
+          {"stint_index": 1, "compound": "MEDIUM", "start_lap": 1, "end_lap": 13},
+          {"stint_index": 2, "compound": "HARD", "start_lap": 14, "end_lap": 30},
+          {"stint_index": 3, "compound": "MEDIUM", "start_lap": 31, "end_lap": 44},
+          {"stint_index": 4, "compound": "SOFT", "start_lap": 45, "end_lap": 56}
+        ]
+      },
+      {
+        "strategy_id": "SEPANG_WET_INTER_SLICK",
+        "name": "Pirelli Rain Contingency (Wet to Intermediate to Slick)",
+        "stops": 2,
+        "is_fastest": false,
+        "delta_seconds": 0.0,
+        "pit_window": [6, 12],
+        "stints": [
+          {"stint_index": 1, "compound": "WET", "start_lap": 1, "end_lap": 10},
+          {"stint_index": 2, "compound": "INTERMEDIATE", "start_lap": 11, "end_lap": 28},
+          {"stint_index": 3, "compound": "HARD", "start_lap": 29, "end_lap": 56}
         ]
       }
     ]
