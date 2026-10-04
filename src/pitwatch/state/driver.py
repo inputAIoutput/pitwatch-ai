@@ -35,6 +35,8 @@ class LeaderboardEntry(BaseModel):
     current_lap: int = 1
     current_compound: str = "UNKNOWN"
     tyre_age_laps: int = 0
+    in_pit: bool = False
+    pit_stops: int = 0
     last_lap_time: Optional[float] = None
     last_lap_time_formatted: Optional[str] = None
 
@@ -83,7 +85,7 @@ class DriverState:
         self.team_name = team_name if (team_name and team_name != "Unknown") else preset.get("team", "Formula 1")
         self.team_colour = team_colour or preset.get("colour", "E10600")
         self.grid_position = grid_position or 0
-        self.current_position = grid_position or 1
+        self.current_position = grid_position or 0
         self.current_lap = 1
         self.current_compound = compound
         self.tyre_age_laps = 0
@@ -94,6 +96,7 @@ class DriverState:
         self.best_lap_time: Optional[float] = None
         self.is_retired: bool = False
         self.in_pit: bool = False
+        self.pit_stops: int = 0
         self.status: str = "active"
 
         self.latest_position: Optional[CarPositionTick] = None
@@ -139,6 +142,8 @@ class DriverState:
             current_lap=self.current_lap,
             current_compound=self.current_compound.value,
             tyre_age_laps=self.tyre_age_laps,
+            in_pit=self.in_pit,
+            pit_stops=self.pit_stops,
             last_lap_time=self.last_lap_time,
             last_lap_time_formatted=format_lap_time(self.last_lap_time),
         )

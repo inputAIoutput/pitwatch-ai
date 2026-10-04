@@ -226,7 +226,16 @@ class LiveSessionState:
                 except Exception:
                     stints = [v for v in stints_raw.values() if isinstance(v, dict)]
 
+            drv = self.register_driver(driver_number=num)
+            line_val = l_data.get("Line")
+            if line_val is not None and str(line_val).isdigit():
+                l_pos = int(line_val)
+                if l_pos > 0:
+                    drv.current_position = l_pos
+
             if stints:
+                if len(stints) > 1:
+                    drv.pit_stops = max(drv.pit_stops, len(stints) - 1)
                 latest_stint = stints[-1]
                 cmp = latest_stint.get("Compound")
                 total_laps = latest_stint.get("TotalLaps")
@@ -237,7 +246,6 @@ class LiveSessionState:
                 elif start_laps is not None and str(start_laps).isdigit():
                     tyre_age = int(start_laps)
 
-                drv = self.register_driver(driver_number=num)
                 if cmp:
                     drv.set_compound(cmp, tyre_age_at_start=tyre_age)
                 else:
@@ -370,10 +378,13 @@ class LiveSessionState:
                 drv.is_retired = True
                 drv.status = "retired"
             gap_val = parse_gap_or_interval(raw_gap)
-            if drv.current_position == 1:
+            if "LEADER" in raw_gap_str or (gap_val == 0.0 and drv.current_position == 1):
                 drv.gap_to_leader = 0.0
+                drv.current_position = 1
             else:
                 drv.gap_to_leader = gap_val
+                if gap_val > 0.0 and drv.current_position == 1:
+                    drv.current_position = 0
 
         # Interval to position ahead
         if "IntervalToPositionAhead" in data:
@@ -382,6 +393,8 @@ class LiveSessionState:
                 drv.interval_ahead = 0.0
             else:
                 drv.interval_ahead = inter_val
+                if drv.current_position == 2 and drv.gap_to_leader == 0.0 and inter_val > 0.0:
+                    drv.gap_to_leader = inter_val
 
         # Last lap time
         if "LastLapTime" in data:
@@ -416,6 +429,13 @@ class LiveSessionState:
 
         if "InPit" in data:
             drv.in_pit = bool(data["InPit"])
+        if data.get("PitOut"):
+            drv.in_pit = False
+        if "NumberOfPitStops" in data:
+            try:
+                drv.pit_stops = int(data["NumberOfPitStops"])
+            except Exception:
+                pass
 
     def update_timing_record(self, record: dict) -> None:
         """Update timing metrics from a flattened record (e.g. from livef1 function_map)."""
@@ -456,10 +476,13 @@ class LiveSessionState:
                 drv.is_retired = True
                 drv.status = "retired"
             gap_val = parse_gap_or_interval(raw_gap)
-            if drv.current_position == 1:
+            if "LEADER" in raw_gap_str or (gap_val == 0.0 and drv.current_position == 1):
                 drv.gap_to_leader = 0.0
+                drv.current_position = 1
             else:
                 drv.gap_to_leader = gap_val
+                if gap_val > 0.0 and drv.current_position == 1:
+                    drv.current_position = 0
 
         # Interval ahead
         inter_val = record.get("IntervalToPositionAhead_Value") or record.get("IntervalToPositionAhead")
@@ -469,6 +492,8 @@ class LiveSessionState:
                 drv.interval_ahead = 0.0
             else:
                 drv.interval_ahead = parsed_inter
+                if drv.current_position == 2 and drv.gap_to_leader == 0.0 and parsed_inter > 0.0:
+                    drv.gap_to_leader = parsed_inter
 
         # Last lap time
         ll_val = record.get("LastLapTime_Value") or record.get("LastLapTime")
@@ -502,6 +527,13 @@ class LiveSessionState:
 
         if "InPit" in record:
             drv.in_pit = bool(record["InPit"])
+        if record.get("PitOut"):
+            drv.in_pit = False
+        if "NumberOfPitStops" in record:
+            try:
+                drv.pit_stops = int(record["NumberOfPitStops"])
+            except Exception:
+                pass
 
     def register_driver(
         self,
@@ -775,31 +807,56 @@ class LiveSessionState:
             return (0 if not d.is_retired else 1, d.current_lap, prog)
 
         has_explicit_positions = any(d.current_position > 1 or d.gap_to_leader > 0.0 or d.interval_ahead > 0.0 for d in active_drivers)
+        for d in active_drivers:
+            if d.current_position == 2 and d.gap_to_leader == 0.0 and d.interval_ahead > 0.0:
+                d.gap_to_leader = d.interval_ahead
+
+        has_gaps = any(d.gap_to_leader > 0.0 for d in active_drivers if not d.is_retired)
+
         if self.has_live_timing or self.positions_by_driver or has_explicit_positions:
-            sorted_drivers = sorted(
-                active_drivers,
-                key=lambda d: (
-                    1 if d.is_retired else 0,
-                    d.current_position if d.current_position > 0 else 999,
-                    -d.current_lap,
-                    d.gap_to_leader if d.gap_to_leader > 0 else 0.0,
-                    d.driver_number,
-                ),
-            )
+            if has_gaps:
+                sorted_drivers = sorted(
+                    active_drivers,
+                    key=lambda d: (
+                        1 if d.is_retired else 0,
+                        -d.current_lap,
+                        d.gap_to_leader if d.gap_to_leader > 0.0 else (0.0 if (d.current_position == 1 or d.grid_position == 1) else (d.current_position * 1000.0 if d.current_position > 0 else 9999.0)),
+                        d.current_position if d.current_position > 0 else 999,
+                        d.driver_number,
+                    ),
+                )
+            else:
+                sorted_drivers = sorted(
+                    active_drivers,
+                    key=lambda d: (
+                        1 if d.is_retired else 0,
+                        d.current_position if d.current_position > 0 else 999,
+                        -d.current_lap,
+                        d.gap_to_leader if d.gap_to_leader > 0 else 0.0,
+                        d.driver_number,
+                    ),
+                )
+
             updated_entries: List[LeaderboardEntry] = []
             prev_drv: Optional[DriverState] = None
+            is_full_grid = len(active_drivers) >= 15
+
             for i, drv in enumerate(sorted_drivers):
-                if drv.current_position <= 0:
+                if is_full_grid or drv.current_position <= 0:
                     drv.current_position = i + 1
 
                 if i == 0 or drv.current_position == 1:
                     drv.gap_to_leader = 0.0
                     drv.interval_ahead = 0.0
                 else:
-                    if drv.gap_to_leader > 0.0 and drv.interval_ahead == 0.0 and prev_drv and prev_drv.current_position < drv.current_position:
-                        drv.interval_ahead = max(0.0, round(drv.gap_to_leader - prev_drv.gap_to_leader, 3))
-                    elif drv.interval_ahead > 0.0 and drv.gap_to_leader == 0.0 and prev_drv:
-                        drv.gap_to_leader = round(prev_drv.gap_to_leader + drv.interval_ahead, 3)
+                    if prev_drv:
+                        if drv.gap_to_leader > 0.0 and prev_drv.gap_to_leader >= 0.0:
+                            if drv.current_lap == prev_drv.current_lap:
+                                drv.interval_ahead = max(0.0, round(drv.gap_to_leader - prev_drv.gap_to_leader, 3))
+                            else:
+                                drv.interval_ahead = max(0.0, drv.gap_to_leader)
+                        elif drv.interval_ahead > 0.0 and drv.gap_to_leader == 0.0:
+                            drv.gap_to_leader = round(prev_drv.gap_to_leader + drv.interval_ahead, 3)
 
                 # Compute DRS / Overtake boost deployment:
                 # Driver gets boost if:
@@ -955,6 +1012,8 @@ class LiveSessionState:
                     "current_lap": entry.current_lap,
                     "current_compound": cmp,
                     "tyre_age_laps": entry.tyre_age_laps,
+                    "in_pit": drv.in_pit if drv else getattr(entry, "in_pit", False),
+                    "pit_stops": drv.pit_stops if drv else getattr(entry, "pit_stops", 0),
                     "last_lap_time": ll_time,
                     "last_lap_time_formatted": format_lap_time(ll_time),
                     "gap_to_leader": entry.gap_to_leader,
@@ -990,6 +1049,8 @@ class LiveSessionState:
                     "current_lap": drv.current_lap,
                     "current_compound": cmp,
                     "tyre_age_laps": drv.tyre_age_laps,
+                    "in_pit": drv.in_pit,
+                    "pit_stops": drv.pit_stops,
                     "last_lap_time": drv.last_lap_time,
                     "last_lap_time_formatted": format_lap_time(drv.last_lap_time),
                     "gap_to_leader": drv.gap_to_leader,
@@ -1060,6 +1121,8 @@ class LiveSessionState:
                     "gap_to_leader_formatted": entry.gap_to_leader_formatted or format_gap(entry.gap_to_leader, entry.position),
                     "interval_ahead": entry.interval_ahead,
                     "interval_ahead_formatted": entry.interval_ahead_formatted or format_interval(entry.interval_ahead, entry.position),
+                    "in_pit": drv.in_pit if drv else getattr(entry, "in_pit", False),
+                    "pit_stops": drv.pit_stops if drv else getattr(entry, "pit_stops", 0),
                     "last_lap_time": drv.last_lap_time if drv.last_lap_time is not None else entry.last_lap_time,
                     "last_lap_time_formatted": format_lap_time(drv.last_lap_time if drv.last_lap_time is not None else entry.last_lap_time),
                 })
@@ -1103,6 +1166,8 @@ class LiveSessionState:
                     "gap_to_leader_formatted": format_gap(drv.gap_to_leader, pos),
                     "interval_ahead": drv.interval_ahead,
                     "interval_ahead_formatted": format_interval(drv.interval_ahead, pos),
+                    "in_pit": drv.in_pit,
+                    "pit_stops": drv.pit_stops,
                     "last_lap_time": drv.last_lap_time,
                     "last_lap_time_formatted": format_lap_time(drv.last_lap_time),
                 })

@@ -13,6 +13,8 @@ class DriverMeta(BaseModel):
     current_lap: int = 1
     current_compound: str = "WET"
     tyre_age_laps: int = 0
+    in_pit: bool = False
+    pit_stops: int = 0
     last_lap_time: Optional[float] = None
     last_lap_time_formatted: Optional[str] = None
     gap_to_leader: float = 0.0
@@ -55,6 +57,8 @@ class VehicleTelemetrySnapshot(BaseModel):
     gap_to_leader_formatted: str = "LEADER"
     interval_ahead: float = 0.0
     interval_ahead_formatted: str = "-"
+    in_pit: bool = False
+    pit_stops: int = 0
     last_lap_time: Optional[float] = None
     last_lap_time_formatted: Optional[str] = None
 

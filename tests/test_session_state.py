@@ -519,6 +519,41 @@ async def test_historical_replay_from_livetiming_construct():
     assert source.time_step == 0.2
 
 
+def test_pit_stop_tracking_and_monotonic_gap_sorting():
+    state = LiveSessionState(session_key=11731, circuit_name="Kuala Lumpur")
+    for d in (3, 12, 63, 1, 6, 44, 81):
+        state.register_driver(d)
+
+    # Ingest TimingData with pit stop and in-pit status
+    state.update_timing_line("1", {"NumberOfLaps": 33, "GapToLeader": "+23.832", "InPit": True, "NumberOfPitStops": 2})
+    state.update_timing_line("3", {"NumberOfLaps": 33, "GapToLeader": "LEADER", "Position": "1"})
+    state.update_timing_line("12", {"NumberOfLaps": 33, "GapToLeader": "+10.981", "Position": "2"})
+    state.update_timing_line("63", {"NumberOfLaps": 33, "GapToLeader": "+14.105", "Position": "3"})
+    state.update_timing_line("6", {"NumberOfLaps": 33, "GapToLeader": "+24.416", "Position": "4"})
+    state.update_timing_line("44", {"NumberOfLaps": 33, "GapToLeader": "+24.881", "Position": "5"})
+    state.update_timing_line("81", {"NumberOfLaps": 33, "GapToLeader": "+47.525", "Position": "6"})
+
+    state._recalculate_leaderboard()
+
+    # Check driver 1 pit status
+    assert state.drivers[1].in_pit is True
+    assert state.drivers[1].pit_stops == 2
+
+    # Check leaderboard order follows gap to leader
+    driver_order = [e.driver_number for e in state.leaderboard]
+    assert driver_order == [3, 12, 63, 1, 6, 44, 81]
+
+    # Verify positions and gaps in session summary
+    summary = state.get_session_summary()
+    d_map = {d["driver_number"]: d for d in summary["drivers"]}
+    assert d_map[1]["in_pit"] is True
+    assert d_map[1]["pit_stops"] == 2
+    assert d_map[81]["in_pit"] is False
+
+    gaps = [d["gap_to_leader"] for d in summary["drivers"] if d["driver_number"] in driver_order]
+    assert gaps == sorted(gaps)
+
+
 
 
 
