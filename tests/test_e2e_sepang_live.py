@@ -105,17 +105,22 @@ def test_sepang_rain_delay_and_metadata_resolution():
     summary = state.get_session_summary()
     drv1 = next(d for d in summary["drivers"] if d["driver_number"] == 1)
     drv3 = next(d for d in summary["drivers"] if d["driver_number"] == 3)
-    assert drv1["team_name"] == "Red Bull Racing"
-    assert drv1["team_colour"] == "3671C6"
-    assert drv1["current_compound"] == "WET"
+    assert drv1["driver_code"] == "NOR"
+    assert drv1["team_name"] == "McLaren"
+    assert drv1["team_colour"] == "F47600"
 
-    assert drv3["team_name"] == "RB"
-    assert drv3["team_colour"] == "6692FF"
-    assert drv3["current_compound"] == "WET"
+    assert drv3["driver_code"] == "VER"
+    assert drv3["team_name"] == "Red Bull Racing"
+    assert drv3["team_colour"] == "4781D7"
+
+    # Set Verstappen to Intermediates as observed on live track
+    state.drivers[3].set_compound("INTERMEDIATE")
+    assert state.drivers[3].current_compound.value == "INTERMEDIATE"
 
     # 4. Check live telemetry snapshot
     snap = state.get_live_telemetry_snapshot()
-    v1 = next(v for v in snap["vehicles"] if v["driver_number"] == 1)
-    assert v1["team_name"] == "Red Bull Racing"
-    assert v1["team_colour"] == "3671C6"
-    assert v1["current_compound"] == "WET"
+    v3 = next(v for v in snap["vehicles"] if v["driver_number"] == 3)
+    assert v3["driver_code"] == "VER"
+    assert v3["team_name"] == "Red Bull Racing"
+    assert v3["team_colour"] == "4781D7"
+    assert v3["current_compound"] == "INTERMEDIATE"

@@ -46,6 +46,7 @@ class LiveF1Source:
         "DriverList",
         "CurrentTyres",
         "TimingData",
+        "TimingAppData",
     ]
 
     def __init__(
@@ -240,17 +241,35 @@ class LiveF1Source:
         # 8. Parse Current Tyres (CurrentTyres)
         tyres_list = records.get("CurrentTyres", [])
         if self.state and tyres_list:
-            from pitwatch.state.driver import TyreCompound
             for t in tyres_list:
                 d_no = t.get("DriverNo") or t.get("RacingNumber")
                 compound = str(t.get("Compound", "")).upper()
                 if d_no and str(d_no).isdigit() and compound:
                     num = int(d_no)
                     if num in self.state.drivers:
-                        for tc in TyreCompound:
-                            if tc.value == compound:
-                                self.state.drivers[num].current_compound = tc
-                                break
+                        self.state.drivers[num].set_compound(compound)
+                    else:
+                        self.state.register_driver(driver_number=num)
+                        self.state.drivers[num].set_compound(compound)
+
+        # 9. Parse Timing App Data (TimingAppData)
+        timing_app_list = records.get("TimingAppData", [])
+        if self.state and timing_app_list:
+            for ta in timing_app_list:
+                lines = ta.get("Lines", {})
+                for d_no, l_data in lines.items():
+                    if str(d_no).isdigit() and isinstance(l_data, dict) and "Stints" in l_data:
+                        stints = l_data["Stints"]
+                        if stints and isinstance(stints, list):
+                            latest_stint = stints[-1]
+                            cmp = latest_stint.get("Compound")
+                            if cmp:
+                                num = int(d_no)
+                                if num in self.state.drivers:
+                                    self.state.drivers[num].set_compound(cmp)
+                                else:
+                                    self.state.register_driver(driver_number=num)
+                                    self.state.drivers[num].set_compound(cmp)
 
         # 5. Parse Team Radio (TeamRadio)
         radio_list = records.get("TeamRadio", [])
@@ -336,6 +355,7 @@ class LiveF1Source:
                 # 2. Subscribe to topics
                 sub_msg = json.dumps({
                     "type": 1,
+                    "invocationId": "0",
                     "target": "Subscribe",
                     "arguments": [self.TOPICS]
                 }) + chr(0x1e)
@@ -439,7 +459,7 @@ class LiveF1Source:
                                 tyres.append({"DriverNo": k, "Compound": v.get("Compound")})
                 if tyres:
                     loop.call_soon_threadsafe(self.enqueue_batch, {topic: tyres})
-            elif topic == "TrackStatus":
+            elif topic in ("TrackStatus", "TimingAppData"):
                 if isinstance(payload, dict):
                     loop.call_soon_threadsafe(self.enqueue_batch, {topic: [payload]})
                 elif isinstance(payload, list):

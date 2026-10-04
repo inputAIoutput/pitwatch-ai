@@ -12,6 +12,7 @@ from pitwatch.ingestion.replay import HistoricalReplaySource
 from pitwatch.ingestion.live import LiveOpenF1Source
 from pitwatch.ingestion.livef1_source import LiveF1Source
 from pitwatch.ingestion.openf1_client import OpenF1Client
+from pitwatch.state.driver import F1_2026_GRID
 from pitwatch.state.session import LiveSessionState
 
 
@@ -127,28 +128,17 @@ async def main():
     except Exception as e:
         print(f"[PitWatch AI] Info: OpenF1 pre-population skipped ({e}). Using 2026 grid metadata.")
         GRID_2026 = [
-            {"driver_number": 1, "name_acronym": "VER", "team_name": "Red Bull Racing", "team_colour": "3671C6"},
-            {"driver_number": 4, "name_acronym": "NOR", "team_name": "McLaren", "team_colour": "FF8000"},
-            {"driver_number": 81, "name_acronym": "PIA", "team_name": "McLaren", "team_colour": "FF8000"},
-            {"driver_number": 44, "name_acronym": "HAM", "team_name": "Ferrari", "team_colour": "E80020"},
-            {"driver_number": 16, "name_acronym": "LEC", "team_name": "Ferrari", "team_colour": "E80020"},
-            {"driver_number": 63, "name_acronym": "RUS", "team_name": "Mercedes", "team_colour": "27F4D2"},
-            {"driver_number": 12, "name_acronym": "ANT", "team_name": "Mercedes", "team_colour": "27F4D2"},
-            {"driver_number": 14, "name_acronym": "ALO", "team_name": "Aston Martin", "team_colour": "229971"},
-            {"driver_number": 18, "name_acronym": "STR", "team_name": "Aston Martin", "team_colour": "229971"},
-            {"driver_number": 55, "name_acronym": "SAI", "team_name": "Williams", "team_colour": "64C4FF"},
-            {"driver_number": 23, "name_acronym": "ALB", "team_name": "Williams", "team_colour": "64C4FF"},
-            {"driver_number": 10, "name_acronym": "GAS", "team_name": "Alpine", "team_colour": "0093CC"},
-            {"driver_number": 27, "name_acronym": "HUL", "team_name": "Sauber", "team_colour": "52E252"},
-            {"driver_number": 5, "name_acronym": "BOR", "team_name": "Sauber", "team_colour": "52E252"},
-            {"driver_number": 22, "name_acronym": "TSU", "team_name": "RB", "team_colour": "6692FF"},
-            {"driver_number": 30, "name_acronym": "LAW", "team_name": "RB", "team_colour": "6692FF"},
-            {"driver_number": 31, "name_acronym": "OCO", "team_name": "Haas", "team_colour": "B6BABD"},
-            {"driver_number": 87, "name_acronym": "BEA", "team_name": "Haas", "team_colour": "B6BABD"},
+            {
+                "driver_number": num,
+                "name_acronym": d["code"],
+                "team_name": d["team"],
+                "team_colour": d["colour"],
+            }
+            for num, d in F1_2026_GRID.items()
         ]
         state.load_drivers(GRID_2026, active_driver_numbers=target_drivers)
 
-    driver_str = ", ".join(f"#{d}" for d in target_drivers)
+    driver_str = "All Drivers" if target_drivers is None else ", ".join(f"#{d}" for d in target_drivers)
 
     if args.live:
         if args.source == "livef1":
