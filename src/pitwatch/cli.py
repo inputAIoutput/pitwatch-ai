@@ -37,6 +37,7 @@ def parse_args(args=None):
     parser.add_argument("--drivers", type=str, default=None, help="Comma-separated list of driver numbers (e.g. '44,1')")
     parser.add_argument("--frames", type=int, default=10, help="Number of frames to verify before stopping")
     parser.add_argument("--lap", type=int, default=1, help="Lap number to start replay from (default 1 for race start, 0 for pre-race garage)")
+    parser.add_argument("--start-session-time", type=float, default=None, help="Start replay directly at a specific session time in seconds (e.g. --start-session-time 900.0)")
     parser.add_argument("--serve", action="store_true", help="Launch FastAPI REST & WebSocket server alongside replay")
     parser.add_argument("--source", type=str, choices=["openf1", "livef1", "livetiming", "f1tv"], default="openf1", help="Ingestion engine backend: 'openf1' (REST), 'livef1' (SignalR), or 'livetiming'/'f1tv' (F1 TV archives)")
     parser.add_argument("--token", type=str, default=None, help="OpenF1 OAuth2 / Bearer access token for live session streaming")
@@ -181,6 +182,9 @@ async def main():
                 start_lap=start_lap,
             )
         source.bind_state(state)
+        if args.start_session_time is not None and hasattr(source, "seek_to"):
+            source.seek_to(args.start_session_time)
+            print(f"[PitWatch AI] Seeked replay to session_time={args.start_session_time}s.")
         source.controller.set_speed(args.speed)
         source.controller.play()
 

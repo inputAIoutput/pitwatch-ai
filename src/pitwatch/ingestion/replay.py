@@ -35,6 +35,18 @@ class HistoricalReplaySource(SessionSource):
         self._current_index = 0
         self.state = None
 
+    def seek_to(self, target_session_time: float) -> None:
+        """Fast-forwards internal frame index and controller to target session_time."""
+        self.controller.seek(target_session_time)
+        idx = 0
+        for i, frame in enumerate(self.frames):
+            if frame.session_time >= target_session_time:
+                idx = i
+                break
+        else:
+            idx = len(self.frames) - 1 if self.frames else 0
+        self._current_index = idx
+
     def bind_state(self, state) -> None:
         self.state = state
         if hasattr(self, "session_info") and self.session_info and hasattr(state, "update_session_info"):
@@ -341,6 +353,29 @@ class HistoricalReplaySource(SessionSource):
         # Download streams
         car_data_lines = _get_stream_lines("CarData.z.jsonStream")
         pos_lines = _get_stream_lines("Position.z.jsonStream")
+        weather_lines = _get_stream_lines("WeatherData.jsonStream")
+        if not weather_lines:
+            weather_lines = _get_stream_lines("WeatherDataSeries.jsonStream")
+
+        # Parse WeatherData lines
+        parsed_weather: List[WeatherTick] = []
+        for w_line in weather_lines:
+            if len(w_line) > 12:
+                try:
+                    w_obj = json.loads(w_line[12:])
+                    parsed_weather.append(
+                        WeatherTick(
+                            track_temperature=float(w_obj.get("TrackTemp", 28.0)),
+                            air_temperature=float(w_obj.get("AirTemp", 22.0)),
+                            rainfall=int(w_obj.get("Rainfall", 0)),
+                            wind_speed=float(w_obj.get("WindSpeed", 0.0)),
+                            wind_direction=int(float(w_obj.get("WindDirection", 0))),
+                            humidity=float(w_obj.get("Humidity", 50.0)),
+                            pressure=float(w_obj["Pressure"]) if "Pressure" in w_obj else None,
+                        )
+                    )
+                except Exception:
+                    pass
 
         # Fallback to sample ticks if streams are unreachable
         if not car_data_lines:
@@ -353,9 +388,16 @@ class HistoricalReplaySource(SessionSource):
         frames: List[ReplayFrame] = []
         base_dt = datetime.now(timezone.utc)
 
+        current_weather_tick = parsed_weather[0] if parsed_weather else WeatherTick(track_temperature=28.0, air_temperature=22.0)
+
         for i in range(total_lines):
             session_time = round(i * time_step, 3)
             frame_dt = datetime.fromtimestamp(base_dt.timestamp() + session_time, tz=timezone.utc)
+
+            # Advance weather tick proportionally if multiple available
+            if parsed_weather:
+                w_idx = min(len(parsed_weather) - 1, int((i / max(1, total_lines)) * len(parsed_weather)))
+                current_weather_tick = parsed_weather[w_idx]
 
             tel_ticks: List[TelemetryTick] = []
             pos_ticks: List[CarPositionTick] = []
@@ -430,6 +472,7 @@ class HistoricalReplaySource(SessionSource):
                     timestamp=frame_dt,
                     positions=pos_ticks,
                     telemetry=tel_ticks,
+                    weather=current_weather_tick,
                 )
             )
 
