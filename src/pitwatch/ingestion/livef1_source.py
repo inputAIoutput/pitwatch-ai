@@ -248,10 +248,15 @@ class LiveF1Source:
         return frame
 
     def _start_signalrcore_client(self, loop: asyncio.AbstractEventLoop, token: Optional[str]) -> None:
-        """Connects to modern F1 SignalR Core endpoint with pre-negotiation and bearer authentication."""
-        negotiate_url = "https://livetiming.formula1.com/signalrcore/negotiate"
-        connection_url = "wss://livetiming.formula1.com/signalrcore"
+        """Connects directly to F1 SignalR Core endpoint using websockets with session stickiness and authToken."""
+        import websockets
 
+        s = requests.Session()
+        negotiate_params = {}
+        if token:
+            negotiate_params["authToken"] = token
+
+        negotiate_url = "https://livetiming.formula1.com/signalrcore/negotiate"
         headers = {
             "User-Agent": "BestHTTP",
             "Accept-Encoding": "gzip, identity",
@@ -259,61 +264,88 @@ class LiveF1Source:
         if self.f1_cookie:
             headers["Cookie"] = self.f1_cookie
 
-        # Pre-negotiate AWSALBCORS cookie
         try:
-            r = requests.options(negotiate_url, headers=headers, timeout=5)
-            if "AWSALBCORS" in r.cookies:
-                cors_val = f"AWSALBCORS={r.cookies['AWSALBCORS']}"
-                headers["Cookie"] = f"{headers['Cookie']}; {cors_val}" if "Cookie" in headers else cors_val
-        except Exception:
-            pass
+            r = s.post(negotiate_url, params=negotiate_params, headers=headers, timeout=10)
+            if r.status_code != 200:
+                print(f"[PitWatch AI] [WARN] SignalR Core negotiate returned HTTP {r.status_code}: {r.text}")
+                return
+            data = r.json()
+            conn_id = data.get("connectionId")
+        except Exception as e:
+            print(f"[PitWatch AI] [WARN] Failed to negotiate with F1 SignalR Core: {e}")
+            return
 
-        options = {
-            "verify_ssl": True,
-            "headers": headers,
+        cookie_str = "; ".join(f"{k}={v}" for k, v in s.cookies.items())
+        ws_headers = {
+            "User-Agent": "BestHTTP",
         }
+        if cookie_str:
+            ws_headers["Cookie"] = cookie_str
+
+        ws_url = f"wss://livetiming.formula1.com/signalrcore?id={conn_id}"
         if token:
-            options["access_token_factory"] = lambda: token
-
-        builder = HubConnectionBuilder().with_url(connection_url, options=options)
-        hub = builder.build()
-
-        def on_open():
-            print("[PitWatch AI] [CONNECTED] Connected to Formula 1 Live Timing SignalR Core stream!")
-            hub.send("Subscribe", [self.TOPICS], on_invocation=on_subscribe_response)
-
-        def on_close():
-            print("[PitWatch AI] SignalR Core connection closed.")
-
-        def on_subscribe_response(msg):
-            if hasattr(msg, "result") and isinstance(msg.result, dict):
-                for topic, payload in msg.result.items():
-                    self._parse_and_enqueue_topic(loop, topic, payload, None)
-
-        def on_feed(msg):
-            if isinstance(msg, list) and len(msg) >= 2:
-                topic = msg[0]
-                payload = msg[1]
-                ts = msg[2] if len(msg) > 2 else None
-                self._parse_and_enqueue_topic(loop, topic, payload, ts)
-
-        hub.on_open(on_open)
-        hub.on_close(on_close)
-        hub.on("feed", on_feed)
+            ws_url += f"&authToken={token}"
 
         print("[PitWatch AI] Connecting to official Formula 1 Live Timing SignalR Core stream...")
+
+        async def _ws_loop():
+            async with websockets.connect(ws_url, additional_headers=ws_headers) as ws:
+                # 1. Send protocol handshake
+                await ws.send(json.dumps({"protocol": "json", "version": 1}) + chr(0x1e))
+                await asyncio.wait_for(ws.recv(), timeout=5.0)
+
+                # 2. Subscribe to topics
+                sub_msg = json.dumps({
+                    "type": 1,
+                    "target": "Subscribe",
+                    "arguments": [self.TOPICS]
+                }) + chr(0x1e)
+                await ws.send(sub_msg)
+                print("[PitWatch AI] [CONNECTED] Connected to Formula 1 Live Timing SignalR Core stream!")
+
+                # 3. Message loop
+                while self.is_running:
+                    try:
+                        raw = await asyncio.wait_for(ws.recv(), timeout=self.poll_interval)
+                        for part in raw.split(chr(0x1e)):
+                            if not part.strip():
+                                continue
+                            try:
+                                msg = json.loads(part)
+                            except Exception:
+                                continue
+
+                            # Handle ping
+                            if msg.get("type") == 6:
+                                await ws.send(json.dumps({"type": 6}) + chr(0x1e))
+                                continue
+
+                            # Handle initial snapshot
+                            if msg.get("type") == 3:
+                                result = msg.get("result", {})
+                                if isinstance(result, dict):
+                                    for t, p in result.items():
+                                        self._parse_and_enqueue_topic(loop, t, p, None)
+
+                            # Handle live invocation feed
+                            elif msg.get("type") == 1 and msg.get("target") == "feed":
+                                args = msg.get("arguments", [])
+                                if isinstance(args, list) and len(args) >= 2:
+                                    t = args[0]
+                                    p = args[1]
+                                    ts = args[2] if len(args) > 2 else None
+                                    self._parse_and_enqueue_topic(loop, t, p, ts)
+                    except asyncio.TimeoutError:
+                        continue
+
         try:
-            hub.start()
-            self._client = hub
-            while self.is_running:
-                time.sleep(0.5)
-            hub.stop()
+            asyncio.run(_ws_loop())
         except Exception as e:
             if not token:
                 print(f"[PitWatch AI] [WARN] F1 Live Timing SignalR error (F1 TV authentication required): {e}")
                 print("  Authenticate with your F1 TV account:")
-                print("    1) Run: .\\.venv\\Scripts\\python.exe -m fastf1 auth f1tv --authenticate")
-                print("    2) Or pass --f1-cookie / --token")
+                print("    1) Pass --token with authToken from Chrome DevTools")
+                print("    2) Or pass --f1-cookie")
             else:
                 print(f"[PitWatch AI] [WARN] F1 Live Timing SignalR Core error: {e}")
 
