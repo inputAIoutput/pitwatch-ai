@@ -28,14 +28,3 @@ async def get_race_control_messages(
         total_messages=len(msgs),
         messages=msgs,
     )
-
-
-@router.get("/messages", response_model=RaceControlMessagesResponse)
-async def get_session_messages(
-    request: Request,
-    category: Optional[str] = Query(default=None, description="Filter by category (Flag, Drs, SafetyCar, Other)"),
-    flag: Optional[str] = Query(default=None, description="Filter by flag (YELLOW, GREEN, RED, BLUE, CHEQUERED)"),
-    limit: Optional[int] = Query(default=None, ge=1, description="Limit number of recent messages returned"),
-):
-    """Convenience alias for /v1/session/race-control."""
-    return await get_race_control_messages(request, category=category, flag=flag, limit=limit)

@@ -183,9 +183,4 @@ def test_get_session_race_control_endpoints(populated_state):
     assert res_limit.status_code == 200
     assert len(res_limit.json()["messages"]) == 2
 
-    # 5. Alias /v1/session/messages
-    res_alias = client.get("/v1/session/messages")
-    assert res_alias.status_code == 200
-    assert res_alias.json()["total_messages"] == data_all["total_messages"]
-
 
