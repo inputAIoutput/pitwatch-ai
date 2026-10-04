@@ -14,10 +14,14 @@ class LiveSessionState:
         self,
         session_key: int,
         circuit_name: str = "Unknown",
+        year: int = 2026,
+        session_name: str = "Grand Prix",
         bounds: Optional[CircuitBounds] = None,
     ):
         self.session_key = session_key
         self.circuit_name = circuit_name
+        self.year = year
+        self.session_name = session_name
         self.normalizer = (
             CoordinateNormalizer(bounds=bounds)
             if bounds
@@ -33,6 +37,44 @@ class LiveSessionState:
         self.stints_by_driver: Dict[int, List[dict]] = {}
         self.laps_by_driver: Dict[int, List[dict]] = {}
         self.positions_by_driver: Dict[int, List[dict]] = {}
+        self.team_radios: List[dict] = []
+        self.race_control_messages: List[dict] = []
+
+    def update_session_info(self, session_info: dict) -> None:
+        """Update session name, circuit, and year from F1 official SessionInfo."""
+        meeting = session_info.get("Meeting", {})
+        if "Circuit" in meeting and "ShortName" in meeting["Circuit"]:
+            self.circuit_name = meeting["Circuit"]["ShortName"]
+        elif "Name" in meeting:
+            self.circuit_name = meeting["Name"]
+
+        if "Name" in session_info:
+            self.session_name = session_info["Name"]
+
+        start_date = session_info.get("StartDate", "")
+        if start_date and len(start_date) >= 4 and start_date[:4].isdigit():
+            self.year = int(start_date[:4])
+
+    def update_driver_list(self, driver_list: dict) -> None:
+        """Populate or update drivers from F1 official DriverList."""
+        for drv_no_str, info in driver_list.items():
+            if not str(drv_no_str).isdigit():
+                continue
+            drv_no = int(drv_no_str)
+            tla = info.get("Tla", f"D{drv_no}")
+            team = info.get("TeamName", "Unknown")
+            colour = info.get("TeamColour", "FFFFFF")
+            if drv_no in self.drivers:
+                self.drivers[drv_no].driver_code = tla
+                self.drivers[drv_no].team_name = team
+                self.drivers[drv_no].team_colour = colour
+            else:
+                self.register_driver(
+                    driver_number=drv_no,
+                    driver_code=tla,
+                    team_name=team,
+                    team_colour=colour,
+                )
 
     def register_driver(
         self,
@@ -340,8 +382,8 @@ class LiveSessionState:
         return {
             "session_key": self.session_key,
             "circuit_name": self.circuit_name,
-            "year": 2024,
-            "session_name": "Grand Prix",
+            "year": self.year,
+            "session_name": self.session_name,
             "status": "active",
             "current_session_time": self.current_session_time,
             "current_lap": session_lap,

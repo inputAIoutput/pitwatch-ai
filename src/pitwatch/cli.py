@@ -26,7 +26,7 @@ def parse_driver_arg(val: str):
 
 def parse_args(args=None):
     parser = argparse.ArgumentParser(description="PitWatch AI Historical Replay CLI")
-    parser.add_argument("--year", type=int, default=2024, help="Championship year")
+    parser.add_argument("--year", type=int, default=2026, help="Championship year")
     parser.add_argument("--round", type=int, default=12, help="Grand Prix round number")
     parser.add_argument("--session", type=int, default=None, help="OpenF1 session key (e.g. 9662 for Abu Dhabi, 9558 for Silverstone, 11731 for Sepang)")
     parser.add_argument("--race", type=str, default=None, help="Grand Prix / circuit name alias (e.g. 'abu dhabi', 'silverstone', 'sepang')")
@@ -93,22 +93,23 @@ async def main():
         session_key = 9662
         circuit_name = "Yas Marina Circuit"
 
-    state = LiveSessionState(session_key=session_key, circuit_name=circuit_name)
+    # Parse target drivers list upfront
+    raw_drivers = str(args.drivers if args.drivers is not None else args.driver)
+    if raw_drivers.strip().lower() == "all":
+        target_drivers = [1, 4, 81, 44, 16, 63, 12, 14, 18, 55, 23, 10, 27, 5, 22, 30, 31, 87]
+    elif "," in raw_drivers:
+        target_drivers = [int(d.strip()) for d in raw_drivers.split(",") if d.strip().isdigit()]
+    elif raw_drivers.strip().isdigit():
+        target_drivers = [int(raw_drivers.strip())]
+    else:
+        target_drivers = [44]
+
+    state = LiveSessionState(session_key=session_key, circuit_name=circuit_name, year=args.year)
     start_lap = args.lap if args.lap > 0 else None
 
     # Pre-populate driver metadata, tyre stints, and laps
     try:
         drivers_raw = await client.get_drivers(session_key=session_key)
-
-        # Parse target drivers list
-        raw_drivers = str(args.drivers if args.drivers is not None else args.driver)
-        if raw_drivers.strip().lower() == "all":
-            target_drivers = [int(d["driver_number"]) for d in drivers_raw if d.get("driver_number")]
-        elif "," in raw_drivers:
-            target_drivers = [int(d.strip()) for d in raw_drivers.split(",") if d.strip().isdigit()]
-        else:
-            target_drivers = [int(args.driver if not isinstance(args.driver, str) or args.driver.isdigit() else 44)]
-
         state.load_drivers(drivers_raw, active_driver_numbers=target_drivers)
         stints_raw = await client.get_stints(session_key=session_key)
         state.load_stints(stints_raw)
@@ -124,8 +125,28 @@ async def main():
             except Exception:
                 pass
     except Exception as e:
-        print(f"[PitWatch AI] Warning: Failed to load driver metadata/stints: {e}")
-        target_drivers = [44]
+        print(f"[PitWatch AI] Info: OpenF1 pre-population skipped ({e}). Using 2026 grid metadata.")
+        GRID_2026 = [
+            {"driver_number": 1, "name_acronym": "VER", "team_name": "Red Bull Racing", "team_colour": "3671C6"},
+            {"driver_number": 4, "name_acronym": "NOR", "team_name": "McLaren", "team_colour": "FF8000"},
+            {"driver_number": 81, "name_acronym": "PIA", "team_name": "McLaren", "team_colour": "FF8000"},
+            {"driver_number": 44, "name_acronym": "HAM", "team_name": "Ferrari", "team_colour": "E80020"},
+            {"driver_number": 16, "name_acronym": "LEC", "team_name": "Ferrari", "team_colour": "E80020"},
+            {"driver_number": 63, "name_acronym": "RUS", "team_name": "Mercedes", "team_colour": "27F4D2"},
+            {"driver_number": 12, "name_acronym": "ANT", "team_name": "Mercedes", "team_colour": "27F4D2"},
+            {"driver_number": 14, "name_acronym": "ALO", "team_name": "Aston Martin", "team_colour": "229971"},
+            {"driver_number": 18, "name_acronym": "STR", "team_name": "Aston Martin", "team_colour": "229971"},
+            {"driver_number": 55, "name_acronym": "SAI", "team_name": "Williams", "team_colour": "64C4FF"},
+            {"driver_number": 23, "name_acronym": "ALB", "team_name": "Williams", "team_colour": "64C4FF"},
+            {"driver_number": 10, "name_acronym": "GAS", "team_name": "Alpine", "team_colour": "0093CC"},
+            {"driver_number": 27, "name_acronym": "HUL", "team_name": "Sauber", "team_colour": "52E252"},
+            {"driver_number": 5, "name_acronym": "BOR", "team_name": "Sauber", "team_colour": "52E252"},
+            {"driver_number": 22, "name_acronym": "TSU", "team_name": "RB", "team_colour": "6692FF"},
+            {"driver_number": 30, "name_acronym": "LAW", "team_name": "RB", "team_colour": "6692FF"},
+            {"driver_number": 31, "name_acronym": "OCO", "team_name": "Haas", "team_colour": "B6BABD"},
+            {"driver_number": 87, "name_acronym": "BEA", "team_name": "Haas", "team_colour": "B6BABD"},
+        ]
+        state.load_drivers(GRID_2026, active_driver_numbers=target_drivers)
 
     driver_str = ", ".join(f"#{d}" for d in target_drivers)
 
