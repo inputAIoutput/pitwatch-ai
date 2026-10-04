@@ -41,3 +41,12 @@ def test_cli_live_flag_parsing():
     assert args.race == "sepang"
 
 
+def test_cli_livef1_source_argument_parsing():
+    args = parse_args(["--live", "--source", "livef1", "--f1-cookie", "session=123", "--token", "tok456"])
+    assert args.live is True
+    assert args.source == "livef1"
+    assert args.f1_cookie == "session=123"
+    assert args.token == "tok456"
+
+
+

@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pitwatch.api.app import create_app
 from pitwatch.ingestion.replay import HistoricalReplaySource
 from pitwatch.ingestion.live import LiveOpenF1Source
+from pitwatch.ingestion.livef1_source import LiveF1Source
 from pitwatch.ingestion.openf1_client import OpenF1Client
 from pitwatch.state.session import LiveSessionState
 
@@ -36,7 +37,9 @@ def parse_args(args=None):
     parser.add_argument("--frames", type=int, default=10, help="Number of frames to verify before stopping")
     parser.add_argument("--lap", type=int, default=1, help="Lap number to start replay from (default 1 for race start, 0 for pre-race garage)")
     parser.add_argument("--serve", action="store_true", help="Launch FastAPI REST & WebSocket server alongside replay")
+    parser.add_argument("--source", type=str, choices=["openf1", "livef1"], default="openf1", help="Live ingestion engine backend: 'openf1' (REST) or 'livef1' (SignalR)")
     parser.add_argument("--token", type=str, default=None, help="OpenF1 OAuth2 / Bearer access token for live session streaming")
+    parser.add_argument("--f1-cookie", type=str, default=None, help="Formula 1 TV authenticated session cookie for LiveF1 SignalR stream")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="API server host")
     parser.add_argument("--port", type=int, default=8000, help="API server port")
     return parser.parse_args(args)
@@ -127,14 +130,24 @@ async def main():
     driver_str = ", ".join(f"#{d}" for d in target_drivers)
 
     if args.live:
-        print(f"[PitWatch AI] Initializing Live Session Polling for Session {session_key} ({circuit_name}), Driver(s) {driver_str} (400ms cadence)...")
-        source = LiveOpenF1Source(
-            session_key=session_key,
-            driver_numbers=target_drivers,
-            client=client,
-            poll_interval_seconds=0.4,
-        )
-        source.bind_state(state)
+        if args.source == "livef1":
+            print(f"[PitWatch AI] Initializing LiveF1 SignalR Ingestion for Session {session_key} ({circuit_name}), Driver(s) {driver_str}...")
+            source = LiveF1Source(
+                session_key=session_key,
+                driver_numbers=target_drivers,
+                f1_cookie=args.f1_cookie,
+                poll_interval=0.2,
+            )
+            source.bind_state(state)
+        else:
+            print(f"[PitWatch AI] Initializing Live OpenF1 Polling for Session {session_key} ({circuit_name}), Driver(s) {driver_str} (400ms cadence)...")
+            source = LiveOpenF1Source(
+                session_key=session_key,
+                driver_numbers=target_drivers,
+                client=client,
+                poll_interval_seconds=0.4,
+            )
+            source.bind_state(state)
     else:
         lap_msg = f"Lap #{args.lap}" if args.lap > 0 else "Pre-Race"
         print(f"[PitWatch AI] Initializing Historical Replay for Session {session_key} ({circuit_name}), Year {args.year}, Driver(s) {driver_str} starting at {lap_msg} ({args.speed}x)...")
