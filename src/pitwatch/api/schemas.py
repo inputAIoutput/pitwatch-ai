@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import List, Literal, Optional
 from pydantic import BaseModel, Field
+from pitwatch.state.timing import FastestLapRecord
 
 
 class DriverMeta(BaseModel):
@@ -13,8 +14,11 @@ class DriverMeta(BaseModel):
     current_compound: str = "WET"
     tyre_age_laps: int = 0
     last_lap_time: Optional[float] = None
+    last_lap_time_formatted: Optional[str] = None
     gap_to_leader: float = 0.0
+    gap_to_leader_formatted: str = "LEADER"
     interval_ahead: float = 0.0
+    interval_ahead_formatted: str = "-"
 
 
 class SessionCurrentResponse(BaseModel):
@@ -27,6 +31,7 @@ class SessionCurrentResponse(BaseModel):
     current_lap: int = 1
     total_laps: int = 52
     total_drivers: int
+    fastest_lap: Optional[FastestLapRecord] = None
     drivers: List[DriverMeta]
 
 
@@ -47,7 +52,11 @@ class VehicleTelemetrySnapshot(BaseModel):
     y: float = 0.0
     progress: float = 0.0
     gap_to_leader: float = 0.0
+    gap_to_leader_formatted: str = "LEADER"
     interval_ahead: float = 0.0
+    interval_ahead_formatted: str = "-"
+    last_lap_time: Optional[float] = None
+    last_lap_time_formatted: Optional[str] = None
 
 
 class LiveTelemetryResponse(BaseModel):

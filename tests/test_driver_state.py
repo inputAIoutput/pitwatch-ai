@@ -56,3 +56,20 @@ def test_tyre_stint_transition():
     driver.set_compound(TyreCompound.HARD)
     assert driver.current_compound == TyreCompound.HARD
     assert driver.tyre_age_laps == 0
+
+
+def test_leaderboard_entry_dual_formatted_timing():
+    drv = DriverState(driver_number=3, driver_code="VER", team_name="Red Bull Racing")
+    drv.current_position = 2
+    drv.gap_to_leader = 2.438
+    drv.interval_ahead = 2.438
+    drv.last_lap_time = 110.519
+
+    entry = drv.to_leaderboard_entry()
+    assert entry.last_lap_time == 110.519
+    assert entry.last_lap_time_formatted == "01:50.519"
+    assert entry.gap_to_leader == 2.438
+    assert entry.gap_to_leader_formatted == "+2.438"
+    assert entry.interval_ahead == 2.438
+    assert entry.interval_ahead_formatted == "+2.438"
+

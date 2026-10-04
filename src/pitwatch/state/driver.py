@@ -3,6 +3,7 @@ from enum import Enum
 from typing import Deque, List, Optional, Union
 from pydantic import BaseModel, Field
 from pitwatch.models.frame import CarPositionTick, TelemetryTick
+from pitwatch.state.timing import format_lap_time, format_gap, format_interval
 
 
 class TyreCompound(str, Enum):
@@ -28,11 +29,14 @@ class LeaderboardEntry(BaseModel):
     driver_number: int
     driver_code: str
     gap_to_leader: float = 0.0
+    gap_to_leader_formatted: str = "LEADER"
     interval_ahead: float = 0.0
+    interval_ahead_formatted: str = "-"
     current_lap: int = 1
     current_compound: str = "UNKNOWN"
     tyre_age_laps: int = 0
     last_lap_time: Optional[float] = None
+    last_lap_time_formatted: Optional[str] = None
 
 
 F1_2026_GRID = {
@@ -125,9 +129,12 @@ class DriverState:
             driver_number=self.driver_number,
             driver_code=self.driver_code,
             gap_to_leader=self.gap_to_leader,
+            gap_to_leader_formatted=format_gap(self.gap_to_leader, self.current_position),
             interval_ahead=self.interval_ahead,
+            interval_ahead_formatted=format_interval(self.interval_ahead, self.current_position),
             current_lap=self.current_lap,
             current_compound=self.current_compound.value,
             tyre_age_laps=self.tyre_age_laps,
             last_lap_time=self.last_lap_time,
+            last_lap_time_formatted=format_lap_time(self.last_lap_time),
         )
