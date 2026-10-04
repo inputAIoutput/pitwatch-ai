@@ -48,6 +48,92 @@ class EnvironmentalEvaluator:
         self._consecutive_rain_ticks: int = 0
         self._consecutive_dry_ticks: int = 0
         self._alert_counter: int = 0
+        self.is_track_declared_wet: bool = False
+        self.race_director_notice: Optional[str] = None
+
+    def record_race_control(self, rcm: Any, session_time: float) -> Optional[CrossoverAlert]:
+        """Ingests and evaluates official FIA Race Control and Race Director notifications."""
+        if isinstance(rcm, str):
+            rcm = {"Message": rcm}
+        elif not isinstance(rcm, dict):
+            return None
+
+        msg = str(rcm.get("Message") or rcm.get("message") or rcm.get("Description") or rcm.get("text") or "").upper()
+        flag = str(rcm.get("Flag") or rcm.get("flag") or "").upper()
+        raw_msg = rcm.get("Message") or rcm.get("message") or msg
+
+        wet_delay_keywords = [
+            "START PROCEDURE DELAYED",
+            "PROCEDURE DELAYED",
+            "START DELAYED",
+            "DELAYED",
+            "DELAY",
+            "STANDING WATER",
+            "AQUAPLANING",
+            "TORRENTIAL",
+            "HEAVY RAIN",
+            "EXTREME WET",
+            "RED FLAG",
+            "SUSPENDED",
+        ]
+        wet_track_keywords = [
+            "TRACK WET",
+            "WET TRACK",
+            "LOW GRIP",
+            "RAIN EXPECTED",
+            "SAFETY CAR START",
+            "RISK OF RAIN",
+            "RAIN",
+            "INTERMEDIATE",
+        ]
+
+        if any(kw in msg for kw in wet_delay_keywords) or (flag == "RED" and "RAIN" in msg):
+            self.is_track_declared_wet = True
+            self.race_director_notice = raw_msg
+            self.crossover_status = CrossoverStatus.WET_OPTIMAL
+            self.recommended_compound = "WET"
+            self._alert_counter += 1
+            self.active_alert = CrossoverAlert(
+                alert_id=f"RCM-{int(session_time)}-{self._alert_counter}",
+                timestamp=datetime.now(timezone.utc),
+                session_time=session_time,
+                severity="CRITICAL",
+                transition=CrossoverStatus.WET_OPTIMAL,
+                current_track_temp=self.history[-1].tick.track_temperature if self.history else 26.0,
+                thermal_drift_rate=self.get_thermal_drift_rate(),
+                grip_loss_projection=85.0,
+                recommended_compound="WET",
+                message=f"RACE DIRECTOR NOTICE: '{raw_msg}'. Standing water / start delayed. Recommended compound: WET.",
+            )
+            return self.active_alert
+
+        elif any(kw in msg for kw in wet_track_keywords):
+            self.is_track_declared_wet = True
+            self.race_director_notice = raw_msg
+            self.crossover_status = CrossoverStatus.INTERMEDIATE_OPTIMAL
+            self.recommended_compound = "INTERMEDIATE"
+            self._alert_counter += 1
+            self.active_alert = CrossoverAlert(
+                alert_id=f"RCM-{int(session_time)}-{self._alert_counter}",
+                timestamp=datetime.now(timezone.utc),
+                session_time=session_time,
+                severity="WARNING",
+                transition=CrossoverStatus.INTERMEDIATE_OPTIMAL,
+                current_track_temp=self.history[-1].tick.track_temperature if self.history else 28.0,
+                thermal_drift_rate=self.get_thermal_drift_rate(),
+                grip_loss_projection=55.0,
+                recommended_compound="INTERMEDIATE",
+                message=f"RACE DIRECTOR NOTICE: '{raw_msg}'. Wet track declared. Recommended compound: INTERMEDIATE.",
+            )
+            return self.active_alert
+
+        elif any(kw in msg for kw in ["TRACK DECLARED DRY", "TRACK DRY", "DECLARED DRY", "DRY TRACK"]) or (
+            "CLEAR" in msg and flag == "GREEN" and self.is_track_declared_wet
+        ):
+            self.is_track_declared_wet = False
+            self.race_director_notice = None
+
+        return None
 
     def record_weather(
         self,
@@ -110,6 +196,10 @@ class EnvironmentalEvaluator:
 
         grip_loss = 0.0
 
+        # 0. Race Director wet track declaration penalty
+        if self.is_track_declared_wet:
+            grip_loss += 75.0 if self.recommended_compound == "WET" else 50.0
+
         # 1. Surface moisture & rainfall impact
         if latest.rainfall == 1:
             # Base 30% instant loss on slicks + time accumulation + humidity factor
@@ -161,8 +251,17 @@ class EnvironmentalEvaluator:
         alert: Optional[CrossoverAlert] = None
 
         # Logic transitions:
+        # 0. Enforce Race Director wet track declarations
+        if self.is_track_declared_wet:
+            if self.recommended_compound == "WET" or grip_loss >= 65.0:
+                new_status = CrossoverStatus.WET_OPTIMAL
+                new_compound = "WET"
+            else:
+                new_status = CrossoverStatus.INTERMEDIATE_OPTIMAL
+                new_compound = "INTERMEDIATE"
+
         # A. Transition to WET
-        if tick.rainfall == 1 and (
+        elif tick.rainfall == 1 and (
             (self._consecutive_rain_ticks >= 6 and tick.track_temperature < 21.0)
             or grip_loss >= 65.0
         ):
@@ -177,8 +276,8 @@ class EnvironmentalEvaluator:
                 new_status = CrossoverStatus.SLICK_TO_INTERMEDIATE
             new_compound = "INTERMEDIATE"
 
-        # C. Transition to SLICK (Drying track)
-        elif tick.rainfall == 0 and self._consecutive_dry_ticks >= 3 and grip_loss < 15.0 and tick.track_temperature >= 22.0:
+        # C. Transition to SLICK (Drying track - only when not declared wet by Race Control)
+        elif not self.is_track_declared_wet and tick.rainfall == 0 and self._consecutive_dry_ticks >= 3 and grip_loss < 15.0 and tick.track_temperature >= 22.0:
             if prev_status in (
                 CrossoverStatus.SLICK_TO_INTERMEDIATE,
                 CrossoverStatus.INTERMEDIATE_OPTIMAL,
@@ -191,7 +290,7 @@ class EnvironmentalEvaluator:
             new_compound = "SLICK"
 
         # D. Steady states
-        elif tick.rainfall == 0 and grip_loss < 10.0:
+        elif not self.is_track_declared_wet and tick.rainfall == 0 and grip_loss < 10.0:
             new_status = CrossoverStatus.DRY_OPTIMAL
             new_compound = "SLICK"
         elif tick.rainfall == 1 and new_compound == "INTERMEDIATE":

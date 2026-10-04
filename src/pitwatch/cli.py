@@ -55,8 +55,8 @@ async def main():
     args = parse_args()
     client = OpenF1Client(api_token=args.token)
 
-    session_key = 9558
-    circuit_name = "Silverstone"
+    session_key = 11731 if args.live else 9558
+    circuit_name = "Kuala Lumpur" if args.live else "Silverstone"
 
     if args.session is not None:
         session_key = args.session
@@ -95,14 +95,14 @@ async def main():
 
     # Parse target drivers list upfront
     raw_drivers = str(args.drivers if args.drivers is not None else args.driver)
-    if raw_drivers.strip().lower() == "all":
-        target_drivers = [1, 4, 81, 44, 16, 63, 12, 14, 18, 55, 23, 10, 27, 5, 22, 30, 31, 87]
+    if raw_drivers.strip().lower() in ("all", "grid", "none"):
+        target_drivers = None
     elif "," in raw_drivers:
         target_drivers = [int(d.strip()) for d in raw_drivers.split(",") if d.strip().isdigit()]
     elif raw_drivers.strip().isdigit():
         target_drivers = [int(raw_drivers.strip())]
     else:
-        target_drivers = [44]
+        target_drivers = None if args.live else [44]
 
     state = LiveSessionState(session_key=session_key, circuit_name=circuit_name, year=args.year)
     start_lap = args.lap if args.lap > 0 else None

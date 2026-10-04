@@ -10,7 +10,7 @@ class DriverMeta(BaseModel):
     team_colour: Optional[str] = None
     current_position: int
     current_lap: int = 1
-    current_compound: str = "UNKNOWN"
+    current_compound: str = "WET"
     tyre_age_laps: int = 0
     last_lap_time: Optional[float] = None
 
@@ -34,6 +34,7 @@ class VehicleTelemetrySnapshot(BaseModel):
     team_name: str
     team_colour: Optional[str] = None
     position: int
+    current_compound: str = "WET"
     speed: int = 0
     gear: int = 0
     throttle: int = 0

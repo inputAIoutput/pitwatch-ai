@@ -35,6 +35,37 @@ class LeaderboardEntry(BaseModel):
     last_lap_time: Optional[float] = None
 
 
+F1_2026_GRID = {
+    1: {"code": "VER", "team": "Red Bull Racing", "colour": "3671C6", "compound": TyreCompound.WET},
+    4: {"code": "NOR", "team": "McLaren", "colour": "FF8000", "compound": TyreCompound.WET},
+    81: {"code": "PIA", "team": "McLaren", "colour": "FF8000", "compound": TyreCompound.WET},
+    44: {"code": "HAM", "team": "Ferrari", "colour": "E80020", "compound": TyreCompound.WET},
+    16: {"code": "LEC", "team": "Ferrari", "colour": "E80020", "compound": TyreCompound.WET},
+    63: {"code": "RUS", "team": "Mercedes", "colour": "27F4D2", "compound": TyreCompound.WET},
+    12: {"code": "ANT", "team": "Mercedes", "colour": "27F4D2", "compound": TyreCompound.WET},
+    14: {"code": "ALO", "team": "Aston Martin", "colour": "229971", "compound": TyreCompound.WET},
+    18: {"code": "STR", "team": "Aston Martin", "colour": "229971", "compound": TyreCompound.WET},
+    55: {"code": "SAI", "team": "Williams", "colour": "64C4FF", "compound": TyreCompound.WET},
+    23: {"code": "ALB", "team": "Williams", "colour": "64C4FF", "compound": TyreCompound.WET},
+    10: {"code": "GAS", "team": "Alpine", "colour": "0093CC", "compound": TyreCompound.WET},
+    7: {"code": "DOO", "team": "Alpine", "colour": "0093CC", "compound": TyreCompound.WET},
+    43: {"code": "COL", "team": "Williams", "colour": "64C4FF", "compound": TyreCompound.WET},
+    27: {"code": "HUL", "team": "Sauber", "colour": "52E252", "compound": TyreCompound.WET},
+    5: {"code": "BOR", "team": "Sauber", "colour": "52E252", "compound": TyreCompound.WET},
+    22: {"code": "TSU", "team": "RB", "colour": "6692FF", "compound": TyreCompound.WET},
+    30: {"code": "LAW", "team": "RB", "colour": "6692FF", "compound": TyreCompound.WET},
+    6: {"code": "HAD", "team": "RB", "colour": "6692FF", "compound": TyreCompound.WET},
+    3: {"code": "RIC", "team": "RB", "colour": "6692FF", "compound": TyreCompound.WET},
+    31: {"code": "OCO", "team": "Haas", "colour": "B6BABD", "compound": TyreCompound.WET},
+    87: {"code": "BEA", "team": "Haas", "colour": "B6BABD", "compound": TyreCompound.WET},
+    11: {"code": "PER", "team": "Red Bull Racing", "colour": "3671C6", "compound": TyreCompound.WET},
+    77: {"code": "BOT", "team": "Sauber", "colour": "52E252", "compound": TyreCompound.WET},
+    24: {"code": "ZHO", "team": "Sauber", "colour": "52E252", "compound": TyreCompound.WET},
+    20: {"code": "MAG", "team": "Haas", "colour": "B6BABD", "compound": TyreCompound.WET},
+    2: {"code": "SAR", "team": "Williams", "colour": "64C4FF", "compound": TyreCompound.WET},
+}
+
+
 class DriverState:
     """Tracks dynamic state, normalized position, and rolling 10-lap history per driver."""
 
@@ -45,15 +76,17 @@ class DriverState:
         team_name: Optional[str] = None,
         team_colour: Optional[str] = None,
         grid_position: Optional[int] = None,
+        compound: TyreCompound = TyreCompound.UNKNOWN,
     ):
+        preset = F1_2026_GRID.get(driver_number, {})
         self.driver_number = driver_number
-        self.driver_code = driver_code
-        self.team_name = team_name or "Unknown"
-        self.team_colour = team_colour
+        self.driver_code = driver_code if driver_code != "DRV" else preset.get("code", f"D{driver_number}")
+        self.team_name = team_name if (team_name and team_name != "Unknown") else preset.get("team", "Formula 1")
+        self.team_colour = team_colour or preset.get("colour", "E10600")
         self.grid_position = grid_position or 0
         self.current_position = grid_position or 1
         self.current_lap = 1
-        self.current_compound = TyreCompound.UNKNOWN
+        self.current_compound = compound
         self.tyre_age_laps = 0
 
         self.gap_to_leader = 0.0

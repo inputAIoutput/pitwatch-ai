@@ -44,6 +44,8 @@ class LiveF1Source:
         "TeamRadio",
         "SessionInfo",
         "DriverList",
+        "CurrentTyres",
+        "TimingData",
     ]
 
     def __init__(
@@ -205,13 +207,50 @@ class LiveF1Source:
                 timestamp=datetime.now(timezone.utc),
             )
 
-        # 4. Parse Race Control (RaceControlMessages)
+        # 4. Parse Driver List (DriverList)
+        driver_list = records.get("DriverList", [])
+        if self.state and driver_list:
+            self.state.update_driver_list(driver_list)
+
+        # 5. Parse Session Info (SessionInfo)
+        session_info = records.get("SessionInfo", [])
+        if self.state and session_info:
+            for s_info in session_info:
+                self.state.update_session_info(s_info)
+
+        # 6. Parse Track Status (TrackStatus)
+        track_status = records.get("TrackStatus", [])
+        if self.state and track_status:
+            for ts in track_status:
+                status_code = str(ts.get("Status", ""))
+                msg_str = str(ts.get("Message", "")).upper()
+                if status_code in ("4", "5") or "RED" in msg_str:
+                    self.state.add_race_control_message({
+                        "Message": f"TRACK STATUS {status_code}: {msg_str or 'RED FLAG - SESSION SUSPENDED / DELAYED'}",
+                        "Flag": "RED",
+                        "Category": "Flag",
+                    })
+
+        # 7. Parse Race Control (RaceControlMessages)
         rcm_list = records.get("RaceControlMessages", [])
         if self.state and rcm_list:
             for rcm in rcm_list:
-                if not hasattr(self.state, "race_control_messages"):
-                    self.state.race_control_messages = []
-                self.state.race_control_messages.append(rcm)
+                self.state.add_race_control_message(rcm)
+
+        # 8. Parse Current Tyres (CurrentTyres)
+        tyres_list = records.get("CurrentTyres", [])
+        if self.state and tyres_list:
+            from pitwatch.state.driver import TyreCompound
+            for t in tyres_list:
+                d_no = t.get("DriverNo") or t.get("RacingNumber")
+                compound = str(t.get("Compound", "")).upper()
+                if d_no and str(d_no).isdigit() and compound:
+                    num = int(d_no)
+                    if num in self.state.drivers:
+                        for tc in TyreCompound:
+                            if tc.value == compound:
+                                self.state.drivers[num].current_compound = tc
+                                break
 
         # 5. Parse Team Radio (TeamRadio)
         radio_list = records.get("TeamRadio", [])
@@ -350,18 +389,61 @@ class LiveF1Source:
                 print(f"[PitWatch AI] [WARN] F1 Live Timing SignalR Core error: {e}")
 
     def _parse_and_enqueue_topic(self, loop: asyncio.AbstractEventLoop, topic: str, payload: Any, ts: Any) -> None:
-        """Parses raw SignalR payload for a given topic using LiveF1 ETL function_map."""
+        """Parses raw SignalR payload for a given topic using LiveF1 ETL function_map with fallback adaptation."""
         if topic == "SessionInfo" and isinstance(payload, dict):
             if "Path" in payload:
                 self.session_path = payload["Path"]
 
+        enqueued = False
         if function_map and topic in function_map:
             try:
                 recs = list(function_map[topic]([(ts, payload)], sessionKey=self.session_key, session_path=self.session_path))
                 if recs:
                     loop.call_soon_threadsafe(self.enqueue_batch, {topic: recs})
+                    enqueued = True
             except Exception:
                 pass
+
+        if not enqueued:
+            if topic == "DriverList":
+                items = []
+                if isinstance(payload, dict):
+                    for k, v in payload.items():
+                        if isinstance(v, dict):
+                            item = dict(v)
+                            item.setdefault("RacingNumber", k)
+                            items.append(item)
+                elif isinstance(payload, list):
+                    items = payload
+                if items:
+                    loop.call_soon_threadsafe(self.enqueue_batch, {topic: items})
+            elif topic == "RaceControlMessages":
+                msgs = []
+                if isinstance(payload, dict) and "Messages" in payload:
+                    msgs = payload["Messages"]
+                elif isinstance(payload, list):
+                    msgs = payload
+                elif isinstance(payload, dict):
+                    msgs = [payload]
+                if msgs:
+                    loop.call_soon_threadsafe(self.enqueue_batch, {topic: msgs})
+            elif topic == "SessionInfo" and isinstance(payload, dict):
+                loop.call_soon_threadsafe(self.enqueue_batch, {topic: [payload]})
+            elif topic == "CurrentTyres":
+                tyres = []
+                if isinstance(payload, dict):
+                    raw = payload.get("Tyres", payload)
+                    if isinstance(raw, dict):
+                        for k, v in raw.items():
+                            if isinstance(v, dict):
+                                tyres.append({"DriverNo": k, "Compound": v.get("Compound")})
+                if tyres:
+                    loop.call_soon_threadsafe(self.enqueue_batch, {topic: tyres})
+            elif topic == "TrackStatus":
+                if isinstance(payload, dict):
+                    loop.call_soon_threadsafe(self.enqueue_batch, {topic: [payload]})
+                elif isinstance(payload, list):
+                    loop.call_soon_threadsafe(self.enqueue_batch, {topic: payload})
 
     def _start_legacy_client(self, loop: asyncio.AbstractEventLoop) -> None:
         """Fallback to RealF1Client legacy SignalR client."""

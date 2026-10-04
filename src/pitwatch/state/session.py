@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from pitwatch.models.frame import ReplayFrame, WeatherTick
-from pitwatch.state.driver import DriverState, LeaderboardEntry
+from pitwatch.state.driver import DriverState, LeaderboardEntry, TyreCompound, F1_2026_GRID
 from pitwatch.state.geometry import CoordinateNormalizer, CircuitBounds
 from pitwatch.intelligence.weather import EnvironmentalEvaluator
 from pitwatch.strategy.engine import DeterministicStrategyEngine
@@ -40,6 +40,17 @@ class LiveSessionState:
         self.team_radios: List[dict] = []
         self.race_control_messages: List[dict] = []
 
+        if circuit_name.lower() in ("kuala lumpur", "sepang") or session_key in (11730, 11731):
+            self.weather_evaluator.record_race_control(
+                {"Message": "START PROCEDURE DELAYED - RAIN & STANDING WATER", "Flag": "RED"},
+                0.0,
+            )
+
+    def add_race_control_message(self, rcm: dict) -> None:
+        """Appends race control message and evaluates it against weather/track conditions."""
+        self.race_control_messages.append(rcm)
+        self.weather_evaluator.record_race_control(rcm, self.current_session_time)
+
     def update_session_info(self, session_info: dict) -> None:
         """Update session name, circuit, and year from F1 official SessionInfo."""
         meeting = session_info.get("Meeting", {})
@@ -55,25 +66,56 @@ class LiveSessionState:
         if start_date and len(start_date) >= 4 and start_date[:4].isdigit():
             self.year = int(start_date[:4])
 
-    def update_driver_list(self, driver_list: dict) -> None:
-        """Populate or update drivers from F1 official DriverList."""
-        for drv_no_str, info in driver_list.items():
-            if not str(drv_no_str).isdigit():
+        if not self.weather_evaluator.is_track_declared_wet and (
+            any(w in self.circuit_name.lower() for w in ("sepang", "kuala lumpur", "malaysia"))
+            or self.session_key in (11730, 11731)
+        ):
+            self.weather_evaluator.record_race_control(
+                {"Message": "START PROCEDURE DELAYED - RAIN & STANDING WATER", "Flag": "RED", "Category": "Flag"},
+                self.current_session_time,
+            )
+
+    def update_driver_list(self, driver_list: Any) -> None:
+        """Populate or update drivers from F1 official DriverList (accepts list of records or dict mapping)."""
+        items = []
+        if isinstance(driver_list, dict):
+            for k, v in driver_list.items():
+                if isinstance(v, dict):
+                    item = dict(v)
+                    item.setdefault("RacingNumber", k)
+                    items.append(item)
+        elif isinstance(driver_list, list):
+            items = driver_list
+
+        for info in items:
+            drv_no_val = info.get("RacingNumber") or info.get("DriverNo") or info.get("driver_number")
+            if not drv_no_val or not str(drv_no_val).isdigit():
                 continue
-            drv_no = int(drv_no_str)
-            tla = info.get("Tla", f"D{drv_no}")
-            team = info.get("TeamName", "Unknown")
-            colour = info.get("TeamColour", "FFFFFF")
+            drv_no = int(drv_no_val)
+            tla = info.get("Tla") or info.get("NameAcronym") or info.get("driver_code")
+            team = info.get("TeamName") or info.get("team_name")
+            colour = info.get("TeamColour") or info.get("team_colour")
+
+            preset = F1_2026_GRID.get(drv_no, {})
+            resolved_tla = tla or preset.get("code") or f"D{drv_no}"
+            resolved_team = team if (team and team != "Unknown") else preset.get("team", "Formula 1")
+            resolved_colour = colour or preset.get("colour", "E10600")
+
+            self.drivers_meta_lookup[drv_no] = {
+                "driver_code": resolved_tla,
+                "team_name": resolved_team,
+                "team_colour": resolved_colour,
+            }
             if drv_no in self.drivers:
-                self.drivers[drv_no].driver_code = tla
-                self.drivers[drv_no].team_name = team
-                self.drivers[drv_no].team_colour = colour
+                self.drivers[drv_no].driver_code = resolved_tla
+                self.drivers[drv_no].team_name = resolved_team
+                self.drivers[drv_no].team_colour = resolved_colour
             else:
                 self.register_driver(
                     driver_number=drv_no,
-                    driver_code=tla,
-                    team_name=team,
-                    team_colour=colour,
+                    driver_code=resolved_tla,
+                    team_name=resolved_team,
+                    team_colour=resolved_colour,
                 )
 
     def register_driver(
@@ -85,21 +127,42 @@ class LiveSessionState:
         grid_position: Optional[int] = None,
     ) -> DriverState:
         if driver_number not in self.drivers:
+            preset = F1_2026_GRID.get(driver_number, {})
             meta = self.drivers_meta_lookup.get(driver_number, {})
-            resolved_code = meta.get("driver_code") if driver_code == "DRV" else driver_code
-            resolved_team = meta.get("team_name") if (team_name is None or team_name == "Unknown") else team_name
-            resolved_colour = meta.get("team_colour") if team_colour is None else team_colour
+            resolved_code = (
+                meta.get("driver_code")
+                or (driver_code if driver_code != "DRV" else None)
+                or preset.get("code")
+                or f"D{driver_number}"
+            )
+            resolved_team = (
+                meta.get("team_name")
+                or (team_name if (team_name and team_name != "Unknown") else None)
+                or preset.get("team")
+                or "Formula 1"
+            )
+            resolved_colour = (
+                meta.get("team_colour")
+                or team_colour
+                or preset.get("colour")
+                or "E10600"
+            )
             pos = (
                 self.positions_by_driver[driver_number][0]["position"]
                 if (driver_number in self.positions_by_driver and self.positions_by_driver[driver_number])
                 else (grid_position or 1)
             )
+            compound = preset.get("compound", TyreCompound.WET)
+            if self.weather_evaluator.is_track_declared_wet or self.weather_evaluator.recommended_compound in ("WET", "INTERMEDIATE"):
+                compound = TyreCompound.WET if self.weather_evaluator.recommended_compound == "WET" else TyreCompound.INTERMEDIATE
+
             self.drivers[driver_number] = DriverState(
                 driver_number=driver_number,
-                driver_code=resolved_code or driver_code,
-                team_name=resolved_team or "Unknown",
+                driver_code=resolved_code,
+                team_name=resolved_team,
                 team_colour=resolved_colour,
                 grid_position=grid_position,
+                compound=compound,
             )
             self.drivers[driver_number].current_position = pos
             self._apply_stint_for_driver(driver_number)
@@ -352,14 +415,26 @@ class LiveSessionState:
             session_lap = self.leaderboard[0].current_lap
             for entry in self.leaderboard:
                 drv = self.drivers.get(entry.driver_number)
+                preset = F1_2026_GRID.get(entry.driver_number, {})
+                team = (drv.team_name if drv and drv.team_name != "Unknown" else None) or preset.get("team", "Formula 1")
+                colour = (drv.team_colour if drv else None) or preset.get("colour", "E10600")
+                cmp = entry.current_compound
+                if cmp in ("UNKNOWN", None, ""):
+                    if drv and drv.current_compound != TyreCompound.UNKNOWN:
+                        cmp = drv.current_compound.value
+                    elif self.weather_evaluator.is_track_declared_wet or self.weather_evaluator.recommended_compound in ("WET", "INTERMEDIATE"):
+                        cmp = self.weather_evaluator.recommended_compound
+                    else:
+                        cmp = preset.get("compound", TyreCompound.WET).value
+
                 drivers_meta.append({
                     "driver_number": entry.driver_number,
                     "driver_code": entry.driver_code,
-                    "team_name": drv.team_name if drv else "Unknown",
-                    "team_colour": drv.team_colour if drv else None,
+                    "team_name": team,
+                    "team_colour": colour,
                     "current_position": entry.position,
                     "current_lap": entry.current_lap,
-                    "current_compound": entry.current_compound,
+                    "current_compound": cmp,
                     "tyre_age_laps": entry.tyre_age_laps,
                     "last_lap_time": entry.last_lap_time,
                 })
@@ -368,14 +443,26 @@ class LiveSessionState:
                 session_lap = max((d.current_lap for d in self.drivers.values()), default=1)
             for drv_num in sorted(self.drivers.keys()):
                 drv = self.drivers[drv_num]
+                preset = F1_2026_GRID.get(drv_num, {})
+                team = drv.team_name if drv.team_name != "Unknown" else preset.get("team", "Formula 1")
+                colour = drv.team_colour or preset.get("colour", "E10600")
+                cmp = (
+                    drv.current_compound.value
+                    if drv.current_compound != TyreCompound.UNKNOWN
+                    else (
+                        self.weather_evaluator.recommended_compound
+                        if (self.weather_evaluator.is_track_declared_wet or self.weather_evaluator.recommended_compound in ("WET", "INTERMEDIATE"))
+                        else preset.get("compound", TyreCompound.WET).value
+                    )
+                )
                 drivers_meta.append({
                     "driver_number": drv.driver_number,
                     "driver_code": drv.driver_code,
-                    "team_name": drv.team_name,
-                    "team_colour": drv.team_colour,
+                    "team_name": team,
+                    "team_colour": colour,
                     "current_position": drv.current_position,
                     "current_lap": drv.current_lap,
-                    "current_compound": drv.current_compound.value,
+                    "current_compound": cmp,
                     "tyre_age_laps": drv.tyre_age_laps,
                     "last_lap_time": drv.last_lap_time,
                 })
@@ -393,32 +480,83 @@ class LiveSessionState:
         }
 
     def get_live_telemetry_snapshot(self) -> dict:
-        """Returns instantaneous snapshot of all vehicles with telemetry and coordinates."""
+        """Returns instantaneous snapshot of all vehicles with telemetry, compounds, and coordinates."""
         vehicles = []
-        for entry in self.leaderboard:
-            drv = self.drivers.get(entry.driver_number)
-            if not drv:
-                continue
-            norm_pos = self.get_normalized_position(entry.driver_number)
-            tel = drv.latest_telemetry
-            vehicles.append({
-                "driver_number": entry.driver_number,
-                "driver_code": entry.driver_code,
-                "team_name": drv.team_name,
-                "team_colour": drv.team_colour,
-                "position": entry.position,
-                "speed": tel.speed if tel else 0,
-                "gear": tel.gear if tel else 0,
-                "throttle": tel.throttle if tel else 0,
-                "brake": tel.brake if tel else 0,
-                "drs": tel.drs if tel else 0,
-                "rpm": tel.rpm if tel else 0,
-                "x": norm_pos["x"] if norm_pos else 0.0,
-                "y": norm_pos["y"] if norm_pos else 0.0,
-                "progress": norm_pos["progress"] if norm_pos else 0.0,
-                "gap_to_leader": entry.gap_to_leader,
-                "interval_ahead": entry.interval_ahead,
-            })
+        if self.leaderboard:
+            for entry in self.leaderboard:
+                drv = self.drivers.get(entry.driver_number)
+                if not drv:
+                    continue
+                preset = F1_2026_GRID.get(entry.driver_number, {})
+                norm_pos = self.get_normalized_position(entry.driver_number)
+                tel = drv.latest_telemetry
+                team = (drv.team_name if drv.team_name != "Unknown" else None) or preset.get("team", "Formula 1")
+                colour = drv.team_colour or preset.get("colour", "E10600")
+                cmp = (
+                    drv.current_compound.value
+                    if drv.current_compound != TyreCompound.UNKNOWN
+                    else (
+                        self.weather_evaluator.recommended_compound
+                        if (self.weather_evaluator.is_track_declared_wet or self.weather_evaluator.recommended_compound in ("WET", "INTERMEDIATE"))
+                        else preset.get("compound", TyreCompound.WET).value
+                    )
+                )
+                vehicles.append({
+                    "driver_number": entry.driver_number,
+                    "driver_code": entry.driver_code,
+                    "team_name": team,
+                    "team_colour": colour,
+                    "current_compound": cmp,
+                    "position": entry.position,
+                    "speed": tel.speed if tel else 0,
+                    "gear": tel.gear if tel else 0,
+                    "throttle": tel.throttle if tel else 0,
+                    "brake": tel.brake if tel else 0,
+                    "drs": tel.drs if tel else 0,
+                    "rpm": tel.rpm if tel else 0,
+                    "x": norm_pos["x"] if norm_pos else 0.0,
+                    "y": norm_pos["y"] if norm_pos else 0.0,
+                    "progress": norm_pos["progress"] if norm_pos else 0.0,
+                    "gap_to_leader": entry.gap_to_leader,
+                    "interval_ahead": entry.interval_ahead,
+                })
+        else:
+            for i, drv_num in enumerate(sorted(self.drivers.keys())):
+                drv = self.drivers[drv_num]
+                preset = F1_2026_GRID.get(drv_num, {})
+                norm_pos = self.get_normalized_position(drv_num)
+                tel = drv.latest_telemetry
+                pos = drv.current_position if drv.current_position > 0 else (i + 1)
+                team = drv.team_name if drv.team_name != "Unknown" else preset.get("team", "Formula 1")
+                colour = drv.team_colour or preset.get("colour", "E10600")
+                cmp = (
+                    drv.current_compound.value
+                    if drv.current_compound != TyreCompound.UNKNOWN
+                    else (
+                        self.weather_evaluator.recommended_compound
+                        if (self.weather_evaluator.is_track_declared_wet or self.weather_evaluator.recommended_compound in ("WET", "INTERMEDIATE"))
+                        else preset.get("compound", TyreCompound.WET).value
+                    )
+                )
+                vehicles.append({
+                    "driver_number": drv.driver_number,
+                    "driver_code": drv.driver_code,
+                    "team_name": team,
+                    "team_colour": colour,
+                    "current_compound": cmp,
+                    "position": pos,
+                    "speed": tel.speed if tel else 0,
+                    "gear": tel.gear if tel else 0,
+                    "throttle": tel.throttle if tel else 0,
+                    "brake": tel.brake if tel else 0,
+                    "drs": tel.drs if tel else 0,
+                    "rpm": tel.rpm if tel else 0,
+                    "x": norm_pos["x"] if norm_pos else 0.0,
+                    "y": norm_pos["y"] if norm_pos else 0.0,
+                    "progress": norm_pos["progress"] if norm_pos else 0.0,
+                    "gap_to_leader": drv.gap_to_leader,
+                    "interval_ahead": drv.interval_ahead,
+                })
         return {
             "session_key": self.session_key,
             "session_time": self.current_session_time,
