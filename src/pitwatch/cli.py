@@ -165,10 +165,12 @@ async def main():
         print(f"[PitWatch AI] Initializing Historical Replay for Session {session_key} ({circuit_name}), Year {args.year}, Driver(s) {driver_str} starting at {lap_msg} ({args.speed}x)...")
 
         if args.source in ("livetiming", "f1tv"):
+            max_f = None if args.serve else (args.frames if args.frames > 0 else None)
             source = await HistoricalReplaySource.from_livetiming(
                 session_key=session_key,
                 driver_number=target_drivers,
                 time_step=0.2,
+                max_frames=max_f,
             )
         else:
             source = await HistoricalReplaySource.from_openf1(

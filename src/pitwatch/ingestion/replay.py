@@ -37,6 +37,10 @@ class HistoricalReplaySource(SessionSource):
 
     def bind_state(self, state) -> None:
         self.state = state
+        if hasattr(self, "session_info") and self.session_info and hasattr(state, "update_session_info"):
+            state.update_session_info(self.session_info)
+        if hasattr(self, "driver_list") and self.driver_list and hasattr(state, "update_driver_list"):
+            state.update_driver_list(self.driver_list)
 
     @classmethod
     def from_frames(cls, frames: List[ReplayFrame], time_step: float = 0.2) -> "HistoricalReplaySource":
@@ -322,6 +326,9 @@ class HistoricalReplaySource(SessionSource):
                 pass
             return {}
 
+        session_info = _get_json("SessionInfo.json")
+        driver_list_data = _get_json("DriverList.json")
+
         def _get_stream_lines(endpoint: str) -> List[str]:
             try:
                 r = requests.get(f"{base_url}{session_path}{endpoint}", timeout=15)
@@ -342,8 +349,6 @@ class HistoricalReplaySource(SessionSource):
         total_lines = max(len(car_data_lines), len(pos_lines))
         if max_frames:
             total_lines = min(total_lines, max_frames)
-        else:
-            total_lines = min(total_lines, 2000)
 
         frames: List[ReplayFrame] = []
         base_dt = datetime.now(timezone.utc)
@@ -429,7 +434,10 @@ class HistoricalReplaySource(SessionSource):
             )
 
         print(f"[PitWatch AI] [LIVETIMING] Constructed {len(frames)} historical replay frames.")
-        return cls(frames=frames, time_step=time_step)
+        source = cls(frames=frames, time_step=time_step)
+        source.session_info = session_info
+        source.driver_list = driver_list_data
+        return source
 
     async def stream_frames(self) -> AsyncIterator[ReplayFrame]:
         while self._current_index < len(self.frames):
