@@ -193,6 +193,8 @@ class LiveSessionState:
                 else:
                     drv.tyre_age_laps = tyre_age
 
+        self._update_grid_slick_ratio()
+
     def update_session_info(self, session_info: dict) -> None:
         """Update session name, circuit, and year from F1 official SessionInfo."""
         meeting = session_info.get("Meeting", {})
@@ -580,6 +582,7 @@ class LiveSessionState:
             s_list.sort(key=lambda x: x.get("stint_number", 1))
             if drv in self.drivers:
                 self._apply_stint_for_driver(drv)
+        self._update_grid_slick_ratio()
 
     def load_laps(self, laps_data: List[dict]) -> None:
         """Loads lap timing records per driver."""
@@ -629,6 +632,18 @@ class LiveSessionState:
             lap_start = active_stint.get("lap_start") or 1
             laps_on_tyre = max(0, curr_lap - lap_start)
             drv.set_compound(compound, tyre_age_at_start=tyre_age_at_start + laps_on_tyre)
+
+    def _update_grid_slick_ratio(self) -> None:
+        """Sync active grid tyre compounds into the weather evaluator to trigger slick crossover if >= 50%."""
+        active_compounds = [
+            d.current_compound.value
+            for d in self.drivers.values()
+            if d.driver_number < 100
+            and not d.is_retired
+            and d.current_compound != TyreCompound.UNKNOWN
+        ]
+        if active_compounds:
+            self.weather_evaluator.update_grid_compounds(active_compounds, self.current_session_time)
 
     def ingest_frame(self, frame: ReplayFrame) -> None:
         self.current_session_time = frame.session_time
@@ -741,6 +756,7 @@ class LiveSessionState:
                 updated_entries.append(drv.to_leaderboard_entry())
 
             self.leaderboard = updated_entries
+            self._update_grid_slick_ratio()
             return
 
         sorted_drivers = sorted(
@@ -786,6 +802,7 @@ class LiveSessionState:
             updated_entries.append(drv.to_leaderboard_entry())
 
         self.leaderboard = updated_entries
+        self._update_grid_slick_ratio()
 
     def get_normalized_position(self, driver_number: int) -> Optional[dict]:
         drv = self.drivers.get(driver_number)
@@ -1033,6 +1050,7 @@ class LiveSessionState:
         }
 
     def get_current_weather(self) -> dict:
+        self._update_grid_slick_ratio()
         latest = self.weather or WeatherTick(track_temperature=0.0, air_temperature=0.0)
         vx, vy = self.weather_evaluator.get_wind_vector()
         drift = self.weather_evaluator.get_thermal_drift_rate()
@@ -1056,6 +1074,8 @@ class LiveSessionState:
             "grip_loss_projection": grip_loss,
             "crossover_status": self.weather_evaluator.crossover_status.value,
             "recommended_compound": self.weather_evaluator.recommended_compound,
+            "slick_ratio": self.weather_evaluator.slick_ratio,
+            "is_track_declared_wet": self.weather_evaluator.is_track_declared_wet,
             "active_alert": alert.model_dump() if alert else None,
         }
 

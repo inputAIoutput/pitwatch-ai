@@ -115,6 +115,8 @@ class CurrentWeatherResponse(BaseModel):
     grip_loss_projection: float
     crossover_status: str
     recommended_compound: str
+    slick_ratio: Optional[float] = 0.0
+    is_track_declared_wet: Optional[bool] = False
     active_alert: Optional[CrossoverAlertSchema] = None
 
 

@@ -66,3 +66,68 @@ def test_get_weather_current_empty_state():
     assert data["recommended_compound"] == "SLICK"
     assert data["crossover_status"] == "DRY_OPTIMAL"
     assert data["active_alert"] is None
+    assert data["slick_ratio"] == 0.0
+    assert data["is_track_declared_wet"] is False
+
+
+def test_get_weather_current_with_drs_override(test_client):
+    client, state = test_client
+    now = datetime(2026, 10, 4, 15, 0, 0, tzinfo=timezone.utc)
+
+    # 1. Start delayed due to rain
+    state.add_race_control_message({
+        "Message": "START PROCEDURE DELAYED - RAIN & STANDING WATER",
+        "Flag": "RED",
+    })
+    # Weather observation: track at 38°C (Medium window)
+    frame = ReplayFrame(
+        session_time=120.0,
+        timestamp=now,
+        weather=WeatherTick(track_temperature=38.0, air_temperature=24.0, rainfall=0),
+    )
+    state.ingest_frame(frame)
+
+    res_wet = client.get("/v1/weather/current").json()
+    assert res_wet["is_track_declared_wet"] is True
+    assert res_wet["recommended_compound"] == "WET"
+
+    # 2. Race Director enables DRS
+    state.add_race_control_message({"Message": "DRS ENABLED"})
+
+    res_dry = client.get("/v1/weather/current").json()
+    assert res_dry["is_track_declared_wet"] is False
+    assert res_dry["recommended_compound"] == "MEDIUM"
+    assert res_dry["crossover_status"] == "DRY_OPTIMAL"
+    assert res_dry["active_alert"] is not None
+
+
+def test_get_weather_current_with_grid_slick_adoption(test_client):
+    client, state = test_client
+    now = datetime(2026, 10, 4, 15, 2, 0, tzinfo=timezone.utc)
+
+    # Track initially declared wet
+    state.weather_evaluator.is_track_declared_wet = True
+    state.weather_evaluator.crossover_status = state.weather_evaluator.crossover_status.WET_OPTIMAL
+    state.weather_evaluator.recommended_compound = "WET"
+
+    frame = ReplayFrame(
+        session_time=150.0,
+        timestamp=now,
+        weather=WeatherTick(track_temperature=26.0, air_temperature=19.0, rainfall=0),
+    )
+    state.ingest_frame(frame)
+
+    # 20 drivers registered: 12 on SOFT, 8 on INTERMEDIATE (60% slicks)
+    for i in range(1, 21):
+        drv = state.register_driver(driver_number=i)
+        if i <= 12:
+            drv.set_compound("SOFT", tyre_age_at_start=1)
+        else:
+            drv.set_compound("INTERMEDIATE", tyre_age_at_start=1)
+
+    res = client.get("/v1/weather/current").json()
+    assert res["slick_ratio"] == 0.6
+    assert res["is_track_declared_wet"] is False
+    assert res["recommended_compound"] == "SOFT"  # 26°C is < 30°C -> SOFT
+    assert res["crossover_status"] == "DRY_OPTIMAL"
+

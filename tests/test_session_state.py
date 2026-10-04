@@ -210,7 +210,7 @@ def test_live_session_state_weather_evaluator_integration():
     current_wx = state.get_current_weather()
     assert current_wx["track_temperature"] == 34.0
     assert current_wx["crossover_status"] == "DRY_OPTIMAL"
-    assert current_wx["recommended_compound"] == "SLICK"
+    assert current_wx["recommended_compound"] == "MEDIUM"
     assert current_wx["thermal_drift_rate"] == 0.0
 
     # Ingest cooling + wet frame
