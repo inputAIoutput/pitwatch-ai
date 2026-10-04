@@ -257,20 +257,8 @@ class LiveF1Source:
         timing_app_list = records.get("TimingAppData", [])
         if self.state and timing_app_list:
             for ta in timing_app_list:
-                lines = ta.get("Lines", {})
-                for d_no, l_data in lines.items():
-                    if str(d_no).isdigit() and isinstance(l_data, dict) and "Stints" in l_data:
-                        stints = l_data["Stints"]
-                        if stints and isinstance(stints, list):
-                            latest_stint = stints[-1]
-                            cmp = latest_stint.get("Compound")
-                            if cmp:
-                                num = int(d_no)
-                                if num in self.state.drivers:
-                                    self.state.drivers[num].set_compound(cmp)
-                                else:
-                                    self.state.register_driver(driver_number=num)
-                                    self.state.drivers[num].set_compound(cmp)
+                if isinstance(ta, dict):
+                    self.state.update_timing_app_data(ta)
 
         # 10. Parse Lap Count (LapCount)
         lap_count_list = records.get("LapCount", [])

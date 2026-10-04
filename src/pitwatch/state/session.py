@@ -106,6 +106,7 @@ class LiveSessionState:
         self.team_radios: List[dict] = []
         self.race_control_messages: List[dict] = []
         self.fastest_lap: Optional[FastestLapRecord] = None
+        self.overtake_enabled: bool = False
 
         if circuit_name.lower() in ("kuala lumpur", "sepang") or session_key in (11730, 11731):
             self.weather_evaluator.record_race_control(
@@ -144,6 +145,53 @@ class LiveSessionState:
         """Appends race control message and evaluates it against weather/track conditions."""
         self.race_control_messages.append(rcm)
         self.weather_evaluator.record_race_control(rcm, self.current_session_time)
+
+        # Detect Overtake / DRS enabling / disabling from race director
+        msg = str(rcm.get("Message", "")).upper()
+        if "OVERTAKE ENABLED" in msg or "DRS ENABLED" in msg:
+            self.overtake_enabled = True
+        elif "OVERTAKE DISABLED" in msg or "DRS DISABLED" in msg:
+            self.overtake_enabled = False
+
+    def update_timing_app_data(self, timing_app_data: dict) -> None:
+        """Update tyre compound and accurate tyre age (TotalLaps / StartLaps) from TimingAppData."""
+        lines = timing_app_data.get("Lines", {})
+        if not isinstance(lines, dict):
+            return
+        for d_no, l_data in lines.items():
+            if not str(d_no).isdigit() or not isinstance(l_data, dict):
+                continue
+            num = int(d_no)
+            if num >= 100:
+                continue
+            stints_raw = l_data.get("Stints")
+            stints: List[dict] = []
+            if isinstance(stints_raw, list):
+                stints = [s for s in stints_raw if isinstance(s, dict)]
+            elif isinstance(stints_raw, dict):
+                # Live timing sometimes sends stints indexed by string key {"0": {...}, "1": {...}}
+                try:
+                    sorted_keys = sorted(stints_raw.keys(), key=lambda k: int(k) if str(k).isdigit() else 0)
+                    stints = [stints_raw[k] for k in sorted_keys if isinstance(stints_raw[k], dict)]
+                except Exception:
+                    stints = [v for v in stints_raw.values() if isinstance(v, dict)]
+
+            if stints:
+                latest_stint = stints[-1]
+                cmp = latest_stint.get("Compound")
+                total_laps = latest_stint.get("TotalLaps")
+                start_laps = latest_stint.get("StartLaps")
+                tyre_age = 0
+                if total_laps is not None and str(total_laps).isdigit():
+                    tyre_age = int(total_laps)
+                elif start_laps is not None and str(start_laps).isdigit():
+                    tyre_age = int(start_laps)
+
+                drv = self.register_driver(driver_number=num)
+                if cmp:
+                    drv.set_compound(cmp, tyre_age_at_start=tyre_age)
+                else:
+                    drv.tyre_age_laps = tyre_age
 
     def update_session_info(self, session_info: dict) -> None:
         """Update session name, circuit, and year from F1 official SessionInfo."""
@@ -644,12 +692,14 @@ class LiveSessionState:
             prog = d.latest_position.progress if d.latest_position and d.latest_position.progress is not None else 0.0
             return (0 if not d.is_retired else 1, d.current_lap, prog)
 
-        if self.has_live_timing or self.positions_by_driver:
+        has_explicit_positions = any(d.current_position > 1 or d.gap_to_leader > 0.0 or d.interval_ahead > 0.0 for d in active_drivers)
+        if self.has_live_timing or self.positions_by_driver or has_explicit_positions:
             sorted_drivers = sorted(
                 active_drivers,
                 key=lambda d: (
                     1 if d.is_retired else 0,
                     d.current_position if d.current_position > 0 else 999,
+                    -d.current_lap,
                     d.gap_to_leader if d.gap_to_leader > 0 else 0.0,
                     d.driver_number,
                 ),
@@ -657,7 +707,10 @@ class LiveSessionState:
             updated_entries: List[LeaderboardEntry] = []
             prev_drv: Optional[DriverState] = None
             for i, drv in enumerate(sorted_drivers):
-                if drv.current_position == 1:
+                if drv.current_position <= 0:
+                    drv.current_position = i + 1
+
+                if i == 0 or drv.current_position == 1:
                     drv.gap_to_leader = 0.0
                     drv.interval_ahead = 0.0
                 else:
@@ -665,6 +718,24 @@ class LiveSessionState:
                         drv.interval_ahead = max(0.0, round(drv.gap_to_leader - prev_drv.gap_to_leader, 3))
                     elif drv.interval_ahead > 0.0 and drv.gap_to_leader == 0.0 and prev_drv:
                         drv.gap_to_leader = round(prev_drv.gap_to_leader + drv.interval_ahead, 3)
+
+                # Compute DRS / Overtake boost deployment:
+                # Driver gets boost if:
+                # 1) Race Control enabled Overtake / DRS
+                # 2) Interval to car directly ahead on track <= 1.0s (or chasing a lapped car under blue flag)
+                # 3) Driver is accelerating (throttle >= 95%, gear >= 6)
+                if drv.latest_telemetry:
+                    is_in_detection_window = (
+                        drv.interval_ahead > 0.0 and drv.interval_ahead <= 1.0
+                    ) or (
+                        prev_drv and prev_drv.current_lap < drv.current_lap and drv.interval_ahead <= 1.0
+                    )
+                    is_accelerating = drv.latest_telemetry.throttle >= 95 and drv.latest_telemetry.gear >= 6
+
+                    if self.overtake_enabled and is_in_detection_window and is_accelerating:
+                        drv.latest_telemetry.drs = 1
+                    elif not self.overtake_enabled:
+                        drv.latest_telemetry.drs = 0
 
                 prev_drv = drv
                 updated_entries.append(drv.to_leaderboard_entry())
@@ -697,6 +768,21 @@ class LiveSessionState:
                 drv.interval_ahead = round(max(0.0, (prev_progress - curr_progress) * LAP_TIME_ESTIMATE), 3)
 
             prev_progress = curr_progress
+
+            # Compute DRS / Overtake boost deployment:
+            if drv.latest_telemetry:
+                is_in_detection_window = (
+                    drv.interval_ahead > 0.0 and drv.interval_ahead <= 1.0
+                ) or (
+                    i > 0 and sorted_drivers[i - 1].current_lap < drv.current_lap and drv.interval_ahead <= 1.0
+                )
+                is_accelerating = drv.latest_telemetry.throttle >= 95 and drv.latest_telemetry.gear >= 6
+
+                if self.overtake_enabled and is_in_detection_window and is_accelerating:
+                    drv.latest_telemetry.drs = 1
+                elif not self.overtake_enabled:
+                    drv.latest_telemetry.drs = 0
+
             updated_entries.append(drv.to_leaderboard_entry())
 
         self.leaderboard = updated_entries

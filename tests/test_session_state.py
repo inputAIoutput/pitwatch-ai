@@ -425,6 +425,101 @@ def test_timing_data_dict_position_and_ordering():
     assert state.drivers[4].current_position == 8
 
 
+def test_tyre_age_total_laps_parsing():
+    state = LiveSessionState(session_key=11731, circuit_name="Kuala Lumpur")
+    state.register_driver(driver_number=81, driver_code="PIA")
+
+    assert state.drivers[81].tyre_age_laps == 0
+
+    # TimingAppData format with Stints containing TotalLaps
+    payload = {
+        "Lines": {
+            "81": {
+                "Stints": [
+                    {
+                        "Compound": "MEDIUM",
+                        "TotalLaps": 12,
+                        "StartLaps": 0,
+                    },
+                    {
+                        "Compound": "HARD",
+                        "TotalLaps": 24,
+                        "StartLaps": 0,
+                    }
+                ]
+            }
+        }
+    }
+    state.update_timing_app_data(payload)
+
+    assert state.drivers[81].current_compound.value == "HARD"
+    assert state.drivers[81].tyre_age_laps == 24
+
+
+def test_drs_overtake_logic_and_delta_detection():
+    state = LiveSessionState(session_key=11731, circuit_name="Kuala Lumpur")
+    state.register_driver(driver_number=1, driver_code="VER")
+    state.register_driver(driver_number=44, driver_code="HAM")
+
+    # Both drivers active, HAM behind VER with delta 0.8s
+    state.drivers[1].current_position = 1
+    state.drivers[44].current_position = 2
+    state.drivers[44].interval_ahead = 0.8
+    state.drivers[44].gap_to_leader = 0.8
+
+    # HAM telemetry: full throttle and high gear
+    state.drivers[44].latest_telemetry = TelemetryTick(
+        driver_number=44, speed=320, gear=7, throttle=98, brake=0, drs=0
+    )
+
+    # 1. Before Overtake enabled by Race Director
+    state._recalculate_leaderboard()
+    assert state.drivers[44].latest_telemetry.drs == 0
+
+    # 2. Race Director enables Overtake
+    state.add_race_control_message({"Message": "OVERTAKE ENABLED"})
+    assert state.overtake_enabled is True
+
+    state._recalculate_leaderboard()
+    assert state.drivers[44].latest_telemetry.drs == 1
+
+    # 3. Race Director disables Overtake (e.g. Safety Car or Yellow flag)
+    state.add_race_control_message({"Message": "OVERTAKE DISABLED"})
+    assert state.overtake_enabled is False
+
+    state._recalculate_leaderboard()
+    assert state.drivers[44].latest_telemetry.drs == 0
+
+
+def test_piastri_p6_leaderboard_sorting_accuracy():
+    state = LiveSessionState(session_key=11731, circuit_name="Kuala Lumpur")
+    state.register_driver(driver_number=1, driver_code="VER")
+    state.register_driver(driver_number=81, driver_code="PIA")
+    state.register_driver(driver_number=4, driver_code="NOR")
+
+    # Live timing assigns official positions: VER P1, NOR P5, PIA P6
+    state.update_timing_line("1", {"Position": "1", "GapToLeader": "LEADER", "NumberOfLaps": 55})
+    state.update_timing_line("4", {"Position": "5", "GapToLeader": "+8.571", "NumberOfLaps": 55})
+    state.update_timing_line("81", {"Position": "6", "GapToLeader": "+9.454", "NumberOfLaps": 55})
+
+    state._recalculate_leaderboard()
+    codes = [entry.driver_code for entry in state.leaderboard]
+    assert codes == ["VER", "NOR", "PIA"]
+    assert state.leaderboard[2].driver_code == "PIA"
+    assert state.leaderboard[2].position == 6
+
+
+@pytest.mark.asyncio
+async def test_historical_replay_from_livetiming_construct():
+    from pitwatch.ingestion.replay import HistoricalReplaySource
+    # Test constructing replay source with max_frames limit
+    source = await HistoricalReplaySource.from_livetiming(session_key=11731, max_frames=5)
+    assert source is not None
+    assert len(source.frames) <= 5
+    assert source.time_step == 0.2
+
+
+
 
 
 

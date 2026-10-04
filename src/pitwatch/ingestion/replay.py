@@ -269,6 +269,168 @@ class HistoricalReplaySource(SessionSource):
 
         return frames
 
+    @classmethod
+    async def from_livetiming(
+        cls,
+        session_key: int = 11731,
+        session_path: Optional[str] = None,
+        driver_number: Optional[Union[int, List[int], str]] = None,
+        time_step: float = 0.2,
+        max_frames: Optional[int] = None,
+    ) -> "HistoricalReplaySource":
+        """Loads historical session records directly from Formula 1 Live Timing archives and builds ReplayFrames."""
+        import requests
+        import zlib
+        import base64
+        import json
+
+        base_url = "https://livetiming.formula1.com/static/"
+        if not session_path:
+            # Discover session path from SessionInfo or default for Sepang/Bahrain 2026
+            if session_key == 11731:
+                session_path = "2026/2026-10-04_Bahrain_Grand_Prix/2026-10-04_Race/"
+            else:
+                try:
+                    resp = requests.get(f"{base_url}SessionInfo.json", timeout=5)
+                    if resp.status_code == 200:
+                        s_info = json.loads(resp.content.decode("utf-8-sig"))
+                        if s_info.get("Key") == session_key and "Path" in s_info:
+                            session_path = s_info["Path"]
+                except Exception:
+                    pass
+        if not session_path:
+            session_path = "2026/2026-10-04_Bahrain_Grand_Prix/2026-10-04_Race/"
+
+        # Normalize target drivers
+        driver_list: Optional[List[int]] = None
+        if isinstance(driver_number, int):
+            driver_list = [driver_number]
+        elif isinstance(driver_number, (list, tuple)):
+            driver_list = [int(d) for d in driver_number]
+        elif isinstance(driver_number, str):
+            driver_list = [int(d.strip()) for d in driver_number.split(",") if d.strip().isdigit()]
+
+        print(f"[PitWatch AI] [LIVETIMING] Downloading archive feeds for {session_path}...")
+
+        # 1. Fetch static SessionInfo & DriverList
+        def _get_json(endpoint: str) -> dict:
+            try:
+                r = requests.get(f"{base_url}{session_path}{endpoint}", timeout=8)
+                if r.status_code == 200:
+                    return json.loads(r.content.decode("utf-8-sig"))
+            except Exception:
+                pass
+            return {}
+
+        def _get_stream_lines(endpoint: str) -> List[str]:
+            try:
+                r = requests.get(f"{base_url}{session_path}{endpoint}", timeout=15)
+                if r.status_code == 200:
+                    return r.content.decode("utf-8-sig").splitlines()
+            except Exception:
+                pass
+            return []
+
+        # Download streams
+        car_data_lines = _get_stream_lines("CarData.z.jsonStream")
+        pos_lines = _get_stream_lines("Position.z.jsonStream")
+
+        # Fallback to sample ticks if streams are unreachable
+        if not car_data_lines:
+            car_data_lines = []
+
+        total_lines = max(len(car_data_lines), len(pos_lines))
+        if max_frames:
+            total_lines = min(total_lines, max_frames)
+        else:
+            total_lines = min(total_lines, 2000)
+
+        frames: List[ReplayFrame] = []
+        base_dt = datetime.now(timezone.utc)
+
+        for i in range(total_lines):
+            session_time = round(i * time_step, 3)
+            frame_dt = datetime.fromtimestamp(base_dt.timestamp() + session_time, tz=timezone.utc)
+
+            tel_ticks: List[TelemetryTick] = []
+            pos_ticks: List[CarPositionTick] = []
+
+            # Parse CarData.z line
+            if i < len(car_data_lines):
+                c_line = car_data_lines[i]
+                if len(c_line) > 12:
+                    try:
+                        raw_b64 = json.loads(c_line[12:])
+                        decomp = zlib.decompress(base64.b64decode(raw_b64), -zlib.MAX_WBITS)
+                        payload = json.loads(decomp.decode("utf-8-sig"))
+                        for entry in payload.get("Entries", []):
+                            for d_str, car_obj in entry.get("Cars", {}).items():
+                                if not d_str.isdigit():
+                                    continue
+                                d_num = int(d_str)
+                                if d_num >= 100 or (driver_list and d_num not in driver_list):
+                                    continue
+                                ch = car_obj.get("Channels", {})
+                                rpm_val = int(ch.get("0", 0))
+                                spd_val = int(ch.get("2", 0))
+                                gear_val = int(ch.get("3", 0))
+                                thr_val = int(ch.get("4", 0))
+                                brk_val = int(ch.get("5", 0))
+                                drs_val = int(ch.get("45", 0))
+
+                                tel_ticks.append(
+                                    TelemetryTick(
+                                        driver_number=d_num,
+                                        speed=spd_val,
+                                        rpm=rpm_val,
+                                        throttle=thr_val,
+                                        brake=brk_val,
+                                        gear=gear_val,
+                                        drs=drs_val,
+                                    )
+                                )
+                    except Exception:
+                        pass
+
+            # Parse Position.z line
+            if i < len(pos_lines):
+                p_line = pos_lines[i]
+                if len(p_line) > 12:
+                    try:
+                        raw_b64 = json.loads(p_line[12:])
+                        decomp = zlib.decompress(base64.b64decode(raw_b64), -zlib.MAX_WBITS)
+                        payload = json.loads(decomp.decode("utf-8-sig"))
+                        for entry in payload.get("Position", []):
+                            for entry_data in entry.get("Entries", {}).values():
+                                for d_str, p_obj in entry_data.get("Cars", {}).items():
+                                    if not d_str.isdigit():
+                                        continue
+                                    d_num = int(d_str)
+                                    if d_num >= 100 or (driver_list and d_num not in driver_list):
+                                        continue
+                                    pos_ticks.append(
+                                        CarPositionTick(
+                                            driver_number=d_num,
+                                            x=float(p_obj.get("X", 0.0)),
+                                            y=float(p_obj.get("Y", 0.0)),
+                                            z=float(p_obj.get("Z", 0.0)),
+                                        )
+                                    )
+                    except Exception:
+                        pass
+
+            frames.append(
+                ReplayFrame(
+                    session_time=session_time,
+                    timestamp=frame_dt,
+                    positions=pos_ticks,
+                    telemetry=tel_ticks,
+                )
+            )
+
+        print(f"[PitWatch AI] [LIVETIMING] Constructed {len(frames)} historical replay frames.")
+        return cls(frames=frames, time_step=time_step)
+
     async def stream_frames(self) -> AsyncIterator[ReplayFrame]:
         while self._current_index < len(self.frames):
             if self.controller.state == PlaybackState.STOPPED:

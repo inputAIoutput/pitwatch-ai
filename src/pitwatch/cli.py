@@ -38,7 +38,7 @@ def parse_args(args=None):
     parser.add_argument("--frames", type=int, default=10, help="Number of frames to verify before stopping")
     parser.add_argument("--lap", type=int, default=1, help="Lap number to start replay from (default 1 for race start, 0 for pre-race garage)")
     parser.add_argument("--serve", action="store_true", help="Launch FastAPI REST & WebSocket server alongside replay")
-    parser.add_argument("--source", type=str, choices=["openf1", "livef1"], default="openf1", help="Live ingestion engine backend: 'openf1' (REST) or 'livef1' (SignalR)")
+    parser.add_argument("--source", type=str, choices=["openf1", "livef1", "livetiming", "f1tv"], default="openf1", help="Ingestion engine backend: 'openf1' (REST), 'livef1' (SignalR), or 'livetiming'/'f1tv' (F1 TV archives)")
     parser.add_argument("--token", type=str, default=None, help="OpenF1 OAuth2 / Bearer access token for live session streaming")
     parser.add_argument("--f1-cookie", type=str, default=None, help="Formula 1 TV authenticated session cookie for LiveF1 SignalR stream")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="API server host")
@@ -164,13 +164,20 @@ async def main():
         lap_msg = f"Lap #{args.lap}" if args.lap > 0 else "Pre-Race"
         print(f"[PitWatch AI] Initializing Historical Replay for Session {session_key} ({circuit_name}), Year {args.year}, Driver(s) {driver_str} starting at {lap_msg} ({args.speed}x)...")
 
-        source = await HistoricalReplaySource.from_openf1(
-            session_key=session_key,
-            driver_number=target_drivers,
-            client=client,
-            time_step=0.2,
-            start_lap=start_lap,
-        )
+        if args.source in ("livetiming", "f1tv"):
+            source = await HistoricalReplaySource.from_livetiming(
+                session_key=session_key,
+                driver_number=target_drivers,
+                time_step=0.2,
+            )
+        else:
+            source = await HistoricalReplaySource.from_openf1(
+                session_key=session_key,
+                driver_number=target_drivers,
+                client=client,
+                time_step=0.2,
+                start_lap=start_lap,
+            )
         source.bind_state(state)
         source.controller.set_speed(args.speed)
         source.controller.play()
@@ -200,7 +207,8 @@ async def main():
         async for frame in source.stream_frames():
             weather_str = f"{frame.weather.track_temperature} C" if frame.weather else "N/A"
             pos_strs = []
-            for d in target_drivers:
+            drivers_to_show = target_drivers if target_drivers else list(state.drivers.keys())[:3]
+            for d in drivers_to_show:
                 norm_pos = state.get_normalized_position(d)
                 if norm_pos:
                     pos_strs.append(f"#{d}: ({norm_pos['x']:.2f}, {norm_pos['y']:.2f}) prog={norm_pos['progress']:.2f}")
