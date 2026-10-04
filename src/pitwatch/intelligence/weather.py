@@ -51,6 +51,20 @@ class EnvironmentalEvaluator:
         self.is_track_declared_wet: bool = False
         self.race_director_notice: Optional[str] = None
 
+    @staticmethod
+    def get_thermal_slick_recommendation(track_temperature: float) -> str:
+        """Determines optimal dry compound based on Pirelli thermal operating windows:
+        - T < 30.0°C: SOFT (warm-up priority)
+        - 30.0°C <= T <= 45.0°C: MEDIUM (optimal degradation balance)
+        - T > 45.0°C: HARD (high thermal blistering resistance)
+        """
+        if track_temperature < 30.0:
+            return "SOFT"
+        elif track_temperature <= 45.0:
+            return "MEDIUM"
+        else:
+            return "HARD"
+
     def record_race_control(self, rcm: Any, session_time: float) -> Optional[CrossoverAlert]:
         """Ingests and evaluates official FIA Race Control and Race Director notifications."""
         if isinstance(rcm, str):
@@ -61,6 +75,50 @@ class EnvironmentalEvaluator:
         msg = str(rcm.get("Message") or rcm.get("message") or rcm.get("Description") or rcm.get("text") or "").upper()
         flag = str(rcm.get("Flag") or rcm.get("flag") or "").upper()
         raw_msg = rcm.get("Message") or rcm.get("message") or msg
+
+        # DRS / Overtake Enabled Notice: Immediately cancels wet status and transitions to slick
+        if "DRS ENABLED" in msg or "DRS ACTIVE" in msg or "OVERTAKE ENABLED" in msg:
+            self.is_track_declared_wet = False
+            self.race_director_notice = None
+            t_track = self.history[-1].tick.track_temperature if self.history else 30.0
+            slick_rec = self.get_thermal_slick_recommendation(t_track)
+            self.recommended_compound = slick_rec
+            self.crossover_status = CrossoverStatus.DRY_OPTIMAL
+            self._alert_counter += 1
+            self.active_alert = CrossoverAlert(
+                alert_id=f"RCM-{int(session_time)}-{self._alert_counter}",
+                timestamp=datetime.now(timezone.utc),
+                session_time=session_time,
+                severity="INFO",
+                transition=CrossoverStatus.DRY_OPTIMAL,
+                current_track_temp=t_track,
+                thermal_drift_rate=self.get_thermal_drift_rate(),
+                grip_loss_projection=self.project_tyre_grip_loss(),
+                recommended_compound=slick_rec,
+                message=f"RACE DIRECTOR NOTICE: '{raw_msg}'. Track dried sufficiently for DRS. Recommended compound: {slick_rec}.",
+            )
+            return self.active_alert
+
+        # DRS / Overtake Disabled Notice: Track getting wet / low visibility
+        if ("DRS DISABLED" in msg or "OVERTAKE DISABLED" in msg) and any(w in msg for w in ("WET", "RAIN", "WEATHER")):
+            self.is_track_declared_wet = True
+            self.race_director_notice = raw_msg
+            self.crossover_status = CrossoverStatus.INTERMEDIATE_OPTIMAL
+            self.recommended_compound = "INTERMEDIATE"
+            self._alert_counter += 1
+            self.active_alert = CrossoverAlert(
+                alert_id=f"RCM-{int(session_time)}-{self._alert_counter}",
+                timestamp=datetime.now(timezone.utc),
+                session_time=session_time,
+                severity="WARNING",
+                transition=CrossoverStatus.INTERMEDIATE_OPTIMAL,
+                current_track_temp=self.history[-1].tick.track_temperature if self.history else 26.0,
+                thermal_drift_rate=self.get_thermal_drift_rate(),
+                grip_loss_projection=50.0,
+                recommended_compound="INTERMEDIATE",
+                message=f"RACE DIRECTOR NOTICE: '{raw_msg}'. DRS disabled due to wet track.",
+            )
+            return self.active_alert
 
         wet_delay_keywords = [
             "START PROCEDURE DELAYED",
@@ -287,12 +345,12 @@ class EnvironmentalEvaluator:
                 new_status = CrossoverStatus.INTERMEDIATE_TO_SLICK
             else:
                 new_status = CrossoverStatus.DRY_OPTIMAL
-            new_compound = "SLICK"
+            new_compound = self.get_thermal_slick_recommendation(tick.track_temperature)
 
         # D. Steady states
         elif not self.is_track_declared_wet and tick.rainfall == 0 and grip_loss < 10.0:
             new_status = CrossoverStatus.DRY_OPTIMAL
-            new_compound = "SLICK"
+            new_compound = self.get_thermal_slick_recommendation(tick.track_temperature)
         elif tick.rainfall == 1 and new_compound == "INTERMEDIATE":
             new_status = CrossoverStatus.INTERMEDIATE_OPTIMAL
         elif tick.rainfall == 1 and new_compound == "WET":
