@@ -237,21 +237,39 @@ class LiveSessionState:
         if not str(driver_number_str).isdigit():
             return
         d_no = int(driver_number_str)
+        if d_no >= 100:
+            return
         drv = self.register_driver(d_no)
         self.has_live_timing = True
 
-        # Position
+        # Position (support string, int, and {"Value": "..."})
         pos_val = data.get("Position") or data.get("Line")
         if pos_val is not None:
+            if isinstance(pos_val, dict):
+                pos_val = pos_val.get("Value")
             pos_str = str(pos_val).strip()
             if pos_str.isdigit():
                 pos_int = int(pos_str)
                 if pos_int > 0:
                     drv.current_position = pos_int
 
+        # Check retirement / stopped status
+        if data.get("Retired") or data.get("Stopped") or data.get("DNF"):
+            drv.is_retired = True
+            drv.status = "retired" if (data.get("Retired") or data.get("DNF")) else "stopped"
+        status_val = str(data.get("Status") or "").upper()
+        if status_val in ("RETIRED", "STOPPED", "DNF", "OUT"):
+            drv.is_retired = True
+            drv.status = status_val.lower()
+
         # Gap to leader
         if "GapToLeader" in data:
-            gap_val = parse_gap_or_interval(data["GapToLeader"])
+            raw_gap = data["GapToLeader"]
+            raw_gap_str = str(raw_gap.get("Value") if isinstance(raw_gap, dict) else raw_gap).upper()
+            if any(k in raw_gap_str for k in ("DNF", "OUT", "STOP", "RETIRED")):
+                drv.is_retired = True
+                drv.status = "retired"
+            gap_val = parse_gap_or_interval(raw_gap)
             if drv.current_position == 1:
                 drv.gap_to_leader = 0.0
             else:
@@ -270,15 +288,21 @@ class LiveSessionState:
             parsed_ll = parse_lap_time(data["LastLapTime"])
             if parsed_ll is not None:
                 drv.last_lap_time = parsed_ll
+                if drv.best_lap_time is None or parsed_ll < drv.best_lap_time:
+                    drv.best_lap_time = parsed_ll
                 self._check_update_fastest_lap(d_no, parsed_ll, drv.current_lap)
 
-        # Best lap time (as fallback if last lap time is not yet set)
+        # Best lap time
         if "BestLapTime" in data:
-            parsed_bl = parse_lap_time(data["BestLapTime"])
+            bl_raw = data["BestLapTime"]
+            parsed_bl = parse_lap_time(bl_raw)
+            lap_num = bl_raw.get("Lap") if isinstance(bl_raw, dict) else drv.current_lap
             if parsed_bl is not None:
                 if drv.last_lap_time is None:
                     drv.last_lap_time = parsed_bl
-                self._check_update_fastest_lap(d_no, parsed_bl, drv.current_lap)
+                if drv.best_lap_time is None or parsed_bl < drv.best_lap_time:
+                    drv.best_lap_time = parsed_bl
+                self._check_update_fastest_lap(d_no, parsed_bl, lap_num)
 
         # Number of laps
         if "NumberOfLaps" in data:
@@ -299,21 +323,39 @@ class LiveSessionState:
         if not d_val or not str(d_val).isdigit():
             return
         d_no = int(d_val)
+        if d_no >= 100:
+            return
         drv = self.register_driver(d_no)
         self.has_live_timing = True
 
-        # Position
+        # Position (support string, int, and {"Value": "..."})
         pos_val = record.get("Position") or record.get("Line")
         if pos_val is not None:
+            if isinstance(pos_val, dict):
+                pos_val = pos_val.get("Value")
             pos_str = str(pos_val).strip()
             if pos_str.isdigit():
                 pos_int = int(pos_str)
                 if pos_int > 0:
                     drv.current_position = pos_int
 
+        # Check retirement / stopped status
+        if record.get("Retired") or record.get("Stopped") or record.get("DNF"):
+            drv.is_retired = True
+            drv.status = "retired" if (record.get("Retired") or record.get("DNF")) else "stopped"
+        status_val = str(record.get("Status") or "").upper()
+        if status_val in ("RETIRED", "STOPPED", "DNF", "OUT"):
+            drv.is_retired = True
+            drv.status = status_val.lower()
+
         # Gap to leader
         if "GapToLeader" in record:
-            gap_val = parse_gap_or_interval(record["GapToLeader"])
+            raw_gap = record["GapToLeader"]
+            raw_gap_str = str(raw_gap.get("Value") if isinstance(raw_gap, dict) else raw_gap).upper()
+            if any(k in raw_gap_str for k in ("DNF", "OUT", "STOP", "RETIRED")):
+                drv.is_retired = True
+                drv.status = "retired"
+            gap_val = parse_gap_or_interval(raw_gap)
             if drv.current_position == 1:
                 drv.gap_to_leader = 0.0
             else:
@@ -334,7 +376,9 @@ class LiveSessionState:
             parsed_ll = parse_lap_time(ll_val)
             if parsed_ll is not None:
                 drv.last_lap_time = parsed_ll
-                self._check_update_fastest_lap(drv_no, parsed_ll, drv.current_lap)
+                if drv.best_lap_time is None or parsed_ll < drv.best_lap_time:
+                    drv.best_lap_time = parsed_ll
+                self._check_update_fastest_lap(d_no, parsed_ll, drv.current_lap)
 
         bl_val = record.get("BestLapTime_Value") or record.get("BestLapTime")
         if bl_val is not None:
@@ -342,7 +386,9 @@ class LiveSessionState:
             if parsed_bl is not None:
                 if drv.last_lap_time is None:
                     drv.last_lap_time = parsed_bl
-                self._check_update_fastest_lap(drv_no, parsed_bl, drv.current_lap)
+                if drv.best_lap_time is None or parsed_bl < drv.best_lap_time:
+                    drv.best_lap_time = parsed_bl
+                self._check_update_fastest_lap(d_no, parsed_bl, drv.current_lap)
 
         # Number of laps
         if "NumberOfLaps" in record:
@@ -365,6 +411,17 @@ class LiveSessionState:
         team_colour: Optional[str] = None,
         grid_position: Optional[int] = None,
     ) -> DriverState:
+        if driver_number >= 100:
+            if not hasattr(self, "course_vehicles"):
+                self.course_vehicles = {}
+            if driver_number not in self.course_vehicles:
+                self.course_vehicles[driver_number] = DriverState(
+                    driver_number=driver_number,
+                    driver_code=f"SC{driver_number}",
+                    team_name="Course Safety Car",
+                )
+            return self.course_vehicles[driver_number]
+
         if driver_number not in self.drivers:
             preset = F1_2026_GRID.get(driver_number, {})
             meta = self.drivers_meta_lookup.get(driver_number, {})
@@ -578,19 +635,24 @@ class LiveSessionState:
         self._recalculate_leaderboard()
 
     def _recalculate_leaderboard(self) -> None:
-        active_drivers = list(self.drivers.values())
+        active_drivers = [d for d in self.drivers.values() if d.driver_number < 100]
         if not active_drivers:
             self.leaderboard = []
             return
 
         def sort_key(d: DriverState):
             prog = d.latest_position.progress if d.latest_position and d.latest_position.progress is not None else 0.0
-            return (d.current_lap, prog)
+            return (0 if not d.is_retired else 1, d.current_lap, prog)
 
         if self.has_live_timing or self.positions_by_driver:
             sorted_drivers = sorted(
                 active_drivers,
-                key=lambda d: (d.current_position if d.current_position > 0 else 999, d.driver_number),
+                key=lambda d: (
+                    1 if d.is_retired else 0,
+                    d.current_position if d.current_position > 0 else 999,
+                    d.gap_to_leader if d.gap_to_leader > 0 else 0.0,
+                    d.driver_number,
+                ),
             )
             updated_entries: List[LeaderboardEntry] = []
             prev_drv: Optional[DriverState] = None
@@ -610,14 +672,21 @@ class LiveSessionState:
             self.leaderboard = updated_entries
             return
 
-        sorted_drivers = sorted(active_drivers, key=sort_key, reverse=True)
-        leader_progress = sort_key(sorted_drivers[0])[1] if sorted_drivers else 0.0
+        sorted_drivers = sorted(
+            active_drivers,
+            key=lambda d: (
+                0 if not d.is_retired else 1,
+                -d.current_lap,
+                -(d.latest_position.progress if d.latest_position and d.latest_position.progress is not None else 0.0),
+            ),
+        )
+        leader_progress = sort_key(sorted_drivers[0])[2] if sorted_drivers else 0.0
         prev_progress = leader_progress
 
         updated_entries = []
         for i, drv in enumerate(sorted_drivers):
             drv.current_position = i + 1
-            curr_progress = sort_key(drv)[1]
+            curr_progress = sort_key(drv)[2]
 
             LAP_TIME_ESTIMATE = 90.0
             if i == 0:
@@ -674,9 +743,25 @@ class LiveSessionState:
         """Returns high-level session status and driver metadata."""
         drivers_meta = []
         session_lap = self.current_lap
+
+        # Safety net: evaluate fastest_lap if not set
+        if self.fastest_lap is None and self.drivers:
+            valid_candidates = []
+            for d in self.drivers.values():
+                if d.driver_number >= 100:
+                    continue
+                t = getattr(d, "best_lap_time", None) or d.last_lap_time
+                if t and t > 0.0:
+                    valid_candidates.append((d, t))
+            if valid_candidates:
+                best_drv, best_t = min(valid_candidates, key=lambda x: x[1])
+                self._check_update_fastest_lap(best_drv.driver_number, best_t, best_drv.current_lap)
+
         if self.leaderboard:
             session_lap = max(self.current_lap, self.leaderboard[0].current_lap, max((e.current_lap for e in self.leaderboard), default=1))
             for entry in self.leaderboard:
+                if entry.driver_number >= 100:
+                    continue
                 drv = self.drivers.get(entry.driver_number)
                 preset = F1_2026_GRID.get(entry.driver_number, {})
                 team = (drv.team_name if drv and drv.team_name != "Unknown" else None) or preset.get("team", "Formula 1")
@@ -711,6 +796,8 @@ class LiveSessionState:
             if self.drivers:
                 session_lap = max(self.current_lap, max((d.current_lap for d in self.drivers.values()), default=1))
             for drv_num in sorted(self.drivers.keys(), key=lambda n: (self.drivers[n].current_position if self.drivers[n].current_position > 0 else 999, n)):
+                if drv_num >= 100:
+                    continue
                 drv = self.drivers[drv_num]
                 preset = F1_2026_GRID.get(drv_num, {})
                 team = drv.team_name if drv.team_name != "Unknown" else preset.get("team", "Formula 1")
@@ -740,6 +827,11 @@ class LiveSessionState:
                     "interval_ahead": drv.interval_ahead,
                     "interval_ahead_formatted": format_interval(drv.interval_ahead, drv.current_position),
                 })
+
+        # Count only active, competing F1 drivers (< 100 and not retired)
+        active_f1_drivers = [d for d in self.drivers.values() if d.driver_number < 100 and not d.is_retired]
+        total_drivers_count = len(active_f1_drivers) if active_f1_drivers else len([d for d in self.drivers.values() if d.driver_number < 100])
+
         return {
             "session_key": self.session_key,
             "circuit_name": self.circuit_name,
@@ -749,7 +841,7 @@ class LiveSessionState:
             "current_session_time": self.current_session_time,
             "current_lap": session_lap,
             "total_laps": self.total_laps or self.strategy_engine.total_laps,
-            "total_drivers": len(self.drivers),
+            "total_drivers": total_drivers_count,
             "fastest_lap": self.fastest_lap.model_dump() if self.fastest_lap else None,
             "drivers": drivers_meta,
         }
@@ -759,6 +851,8 @@ class LiveSessionState:
         vehicles = []
         if self.leaderboard:
             for entry in self.leaderboard:
+                if entry.driver_number >= 100:
+                    continue
                 drv = self.drivers.get(entry.driver_number)
                 if not drv:
                     continue
@@ -801,6 +895,8 @@ class LiveSessionState:
                 })
         else:
             for i, drv_num in enumerate(sorted(self.drivers.keys())):
+                if drv_num >= 100:
+                    continue
                 drv = self.drivers[drv_num]
                 preset = F1_2026_GRID.get(drv_num, {})
                 norm_pos = self.get_normalized_position(drv_num)

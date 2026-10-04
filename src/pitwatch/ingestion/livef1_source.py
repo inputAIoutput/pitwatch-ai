@@ -153,7 +153,7 @@ class LiveF1Source:
             except ValueError:
                 continue
 
-            if self.driver_numbers and drv_no not in self.driver_numbers:
+            if drv_no >= 100 or (self.driver_numbers and drv_no not in self.driver_numbers):
                 continue
 
             if "X" in p and "Y" in p:
@@ -177,7 +177,7 @@ class LiveF1Source:
             except ValueError:
                 continue
 
-            if self.driver_numbers and drv_no not in self.driver_numbers:
+            if drv_no >= 100 or (self.driver_numbers and drv_no not in self.driver_numbers):
                 continue
 
             telemetry.append(

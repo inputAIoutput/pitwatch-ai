@@ -340,5 +340,91 @@ def test_centralized_fastest_lap_tracking_and_formatting():
     assert "interval_ahead_formatted" in ant_meta
 
 
+def test_safety_car_and_medical_car_not_registered_as_drivers():
+    state = LiveSessionState(session_key=11731, circuit_name="Kuala Lumpur")
+    state.register_driver(driver_number=3, driver_code="VER")
+
+    # Ingest frame containing Safety Car (243) and Medical Car (242)
+    frame = ReplayFrame(
+        session_time=200.0,
+        timestamp=datetime.now(timezone.utc),
+        positions=[
+            CarPositionTick(driver_number=3, x=100.0, y=100.0, progress=0.50),
+            CarPositionTick(driver_number=243, x=95.0, y=95.0, progress=0.49),
+            CarPositionTick(driver_number=242, x=90.0, y=90.0, progress=0.48),
+        ],
+    )
+    state.ingest_frame(frame)
+
+    assert 3 in state.drivers
+    assert 243 not in state.drivers
+    assert 242 not in state.drivers
+    assert len(state.leaderboard) == 1
+    assert state.leaderboard[0].driver_number == 3
+
+    summary = state.get_session_summary()
+    assert summary["total_drivers"] == 1
+    assert all(d["driver_number"] < 100 for d in summary["drivers"])
+
+
+def test_total_drivers_and_retirement_tracking():
+    state = LiveSessionState(session_key=11731, circuit_name="Kuala Lumpur")
+    for d_no in (3, 12, 63, 6, 44, 16, 81, 4, 30, 14, 27, 41, 18, 87, 43, 31, 10, 5, 23, 11, 77, 55):
+        state.register_driver(driver_number=d_no)
+
+    assert len(state.drivers) == 22
+    assert state.get_session_summary()["total_drivers"] == 22
+
+    # Albon (23) stops, Bottas (77) retires
+    state.update_timing_line("23", {"Status": "Stopped", "Stopped": True})
+    state.update_timing_line("77", {"Status": "Retired", "Retired": True})
+
+    assert state.drivers[23].is_retired is True
+    assert state.drivers[77].is_retired is True
+
+    summary = state.get_session_summary()
+    assert summary["total_drivers"] == 20
+
+    # In leaderboard, retired drivers are sorted to the back
+    state._recalculate_leaderboard()
+    assert state.leaderboard[-2].driver_number in (23, 77)
+    assert state.leaderboard[-1].driver_number in (23, 77)
+
+
+def test_fastest_lap_safety_net_fallback():
+    state = LiveSessionState(session_key=11731, circuit_name="Kuala Lumpur")
+    state.register_driver(driver_number=3, driver_code="VER")
+    state.register_driver(driver_number=44, driver_code="HAM")
+
+    # Set lap times on drivers without calling _check_update_fastest_lap
+    state.drivers[3].last_lap_time = 100.275
+    state.drivers[44].last_lap_time = 99.178
+    assert state.fastest_lap is None
+
+    # Calling get_session_summary triggers safety net
+    summary = state.get_session_summary()
+    assert summary["fastest_lap"] is not None
+    assert summary["fastest_lap"]["driver_code"] == "HAM"
+    assert summary["fastest_lap"]["lap_time"] == 99.178
+    assert summary["fastest_lap"]["lap_time_formatted"] == "01:39.178"
+
+
+def test_timing_data_dict_position_and_ordering():
+    state = LiveSessionState(session_key=11731, circuit_name="Kuala Lumpur")
+    state.register_driver(driver_number=81, driver_code="PIA", grid_position=4)
+    state.register_driver(driver_number=4, driver_code="NOR", grid_position=5)
+
+    assert state.drivers[81].current_position == 4
+    assert state.drivers[4].current_position == 5
+
+    # LiveF1 delivers position as {"Value": "7"}
+    state.update_timing_line("81", {"Position": {"Value": "7"}})
+    state.update_timing_line("4", {"Position": {"Value": "8"}})
+
+    assert state.drivers[81].current_position == 7
+    assert state.drivers[4].current_position == 8
+
+
+
 
 

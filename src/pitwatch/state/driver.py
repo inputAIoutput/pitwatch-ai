@@ -91,6 +91,10 @@ class DriverState:
         self.gap_to_leader = 0.0
         self.interval_ahead = 0.0
         self.last_lap_time: Optional[float] = None
+        self.best_lap_time: Optional[float] = None
+        self.is_retired: bool = False
+        self.in_pit: bool = False
+        self.status: str = "active"
 
         self.latest_position: Optional[CarPositionTick] = None
         self.latest_telemetry: Optional[TelemetryTick] = None
