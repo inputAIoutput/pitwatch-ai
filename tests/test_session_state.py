@@ -301,4 +301,44 @@ def test_live_position_progress_auto_calculated_from_coordinates():
     assert 0.15 <= norm_pos2["progress"] <= 0.35
 
 
+def test_centralized_fastest_lap_tracking_and_formatting():
+    state = LiveSessionState(session_key=11731, circuit_name="Kuala Lumpur")
+    state.register_driver(driver_number=12, driver_code="ANT", team_name="Mercedes", team_colour="00D7B6")
+    state.register_driver(driver_number=3, driver_code="VER", team_name="Red Bull Racing", team_colour="4781D7")
+
+    # Lap 1: Verstappen sets 112.500
+    state.drivers[3].set_compound("INTERMEDIATE")
+    state._check_update_fastest_lap(driver_number=3, lap_time=112.500, lap_number=1)
+    assert state.fastest_lap is not None
+    assert state.fastest_lap.driver_number == 3
+    assert state.fastest_lap.driver_code == "VER"
+    assert state.fastest_lap.lap_time == 112.500
+    assert state.fastest_lap.lap_time_formatted == "01:52.500"
+
+    # Lap 2: Antonelli beats it with 108.702 (Session benchmark)
+    state.drivers[12].set_compound("INTERMEDIATE")
+    state._check_update_fastest_lap(driver_number=12, lap_time=108.702, lap_number=4)
+    assert state.fastest_lap.driver_number == 12
+    assert state.fastest_lap.driver_code == "ANT"
+    assert state.fastest_lap.lap_time == 108.702
+    assert state.fastest_lap.lap_time_formatted == "01:48.702"
+    assert state.fastest_lap.lap_number == 4
+
+    # Lap 3: Slower lap does not overwrite
+    state._check_update_fastest_lap(driver_number=3, lap_time=109.100, lap_number=5)
+    assert state.fastest_lap.driver_number == 12
+
+    # Check summary contains fastest_lap and formatted driver strings
+    summary = state.get_session_summary()
+    assert summary["fastest_lap"] is not None
+    assert summary["fastest_lap"]["driver_code"] == "ANT"
+    assert summary["fastest_lap"]["lap_time_formatted"] == "01:48.702"
+
+    ant_meta = next(d for d in summary["drivers"] if d["driver_number"] == 12)
+    assert "last_lap_time_formatted" in ant_meta
+    assert "gap_to_leader_formatted" in ant_meta
+    assert "interval_ahead_formatted" in ant_meta
+
+
+
 

@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Optional, Union
 from pitwatch.models.frame import ReplayFrame, WeatherTick
 from pitwatch.state.driver import DriverState, LeaderboardEntry, TyreCompound, F1_2026_GRID
 from pitwatch.state.geometry import CoordinateNormalizer, CircuitBounds
+from pitwatch.state.timing import format_lap_time, format_gap, format_interval, FastestLapRecord
 from pitwatch.intelligence.weather import EnvironmentalEvaluator
 from pitwatch.strategy.engine import DeterministicStrategyEngine
 
@@ -104,11 +105,39 @@ class LiveSessionState:
         self.positions_by_driver: Dict[int, List[dict]] = {}
         self.team_radios: List[dict] = []
         self.race_control_messages: List[dict] = []
+        self.fastest_lap: Optional[FastestLapRecord] = None
 
         if circuit_name.lower() in ("kuala lumpur", "sepang") or session_key in (11730, 11731):
             self.weather_evaluator.record_race_control(
                 {"Message": "START PROCEDURE DELAYED - RAIN & STANDING WATER", "Flag": "RED"},
                 0.0,
+            )
+
+    def _check_update_fastest_lap(
+        self, driver_number: int, lap_time: float, lap_number: Optional[int] = None
+    ) -> None:
+        """Evaluates whether lap_time beats current session fastest lap benchmark and updates if faster."""
+        if lap_time <= 0.0:
+            return
+        if self.fastest_lap is None or lap_time < self.fastest_lap.lap_time:
+            drv = self.drivers.get(driver_number)
+            preset = F1_2026_GRID.get(driver_number, {})
+            code = drv.driver_code if drv else preset.get("code", f"D{driver_number}")
+            team = (drv.team_name if drv and drv.team_name != "Unknown" else None) or preset.get("team", "Formula 1")
+            colour = (drv.team_colour if drv else None) or preset.get("colour", "E10600")
+            cmp_val = drv.current_compound.value if drv and drv.current_compound != TyreCompound.UNKNOWN else preset.get("compound", TyreCompound.UNKNOWN).value
+            lap_num = lap_number or (drv.current_lap if drv else 1)
+
+            self.fastest_lap = FastestLapRecord(
+                driver_number=driver_number,
+                driver_code=code,
+                team_name=team,
+                team_colour=colour,
+                lap_number=lap_num,
+                lap_time=round(lap_time, 3),
+                lap_time_formatted=format_lap_time(lap_time) or "",
+                compound=cmp_val,
+                recorded_at_session_time=self.current_session_time,
             )
 
     def add_race_control_message(self, rcm: dict) -> None:
@@ -241,12 +270,15 @@ class LiveSessionState:
             parsed_ll = parse_lap_time(data["LastLapTime"])
             if parsed_ll is not None:
                 drv.last_lap_time = parsed_ll
+                self._check_update_fastest_lap(drv_no, parsed_ll, drv.current_lap)
 
         # Best lap time (as fallback if last lap time is not yet set)
-        if drv.last_lap_time is None and "BestLapTime" in data:
+        if "BestLapTime" in data:
             parsed_bl = parse_lap_time(data["BestLapTime"])
             if parsed_bl is not None:
-                drv.last_lap_time = parsed_bl
+                if drv.last_lap_time is None:
+                    drv.last_lap_time = parsed_bl
+                self._check_update_fastest_lap(drv_no, parsed_bl, drv.current_lap)
 
         # Number of laps
         if "NumberOfLaps" in data:
@@ -302,13 +334,15 @@ class LiveSessionState:
             parsed_ll = parse_lap_time(ll_val)
             if parsed_ll is not None:
                 drv.last_lap_time = parsed_ll
+                self._check_update_fastest_lap(drv_no, parsed_ll, drv.current_lap)
 
-        if drv.last_lap_time is None:
-            bl_val = record.get("BestLapTime_Value") or record.get("BestLapTime")
-            if bl_val is not None:
-                parsed_bl = parse_lap_time(bl_val)
-                if parsed_bl is not None:
+        bl_val = record.get("BestLapTime_Value") or record.get("BestLapTime")
+        if bl_val is not None:
+            parsed_bl = parse_lap_time(bl_val)
+            if parsed_bl is not None:
+                if drv.last_lap_time is None:
                     drv.last_lap_time = parsed_bl
+                self._check_update_fastest_lap(drv_no, parsed_bl, drv.current_lap)
 
         # Number of laps
         if "NumberOfLaps" in record:
@@ -526,6 +560,7 @@ class LiveSessionState:
                     last_completed = completed_laps[-1]
                     drv.last_lap_time = last_completed["lap_duration"]
                     drv.current_lap = last_completed["lap_number"] + 1
+                    self._check_update_fastest_lap(drv_num, drv.last_lap_time, last_completed["lap_number"])
                 else:
                     drv.current_lap = laps[0]["lap_number"]
                 self._apply_stint_for_driver(drv_num)
@@ -665,8 +700,11 @@ class LiveSessionState:
                     "current_compound": cmp,
                     "tyre_age_laps": entry.tyre_age_laps,
                     "last_lap_time": entry.last_lap_time,
+                    "last_lap_time_formatted": format_lap_time(entry.last_lap_time),
                     "gap_to_leader": entry.gap_to_leader,
+                    "gap_to_leader_formatted": format_gap(entry.gap_to_leader, entry.position),
                     "interval_ahead": entry.interval_ahead,
+                    "interval_ahead_formatted": format_interval(entry.interval_ahead, entry.position),
                 })
         else:
             if self.drivers:
@@ -695,8 +733,11 @@ class LiveSessionState:
                     "current_compound": cmp,
                     "tyre_age_laps": drv.tyre_age_laps,
                     "last_lap_time": drv.last_lap_time,
+                    "last_lap_time_formatted": format_lap_time(drv.last_lap_time),
                     "gap_to_leader": drv.gap_to_leader,
+                    "gap_to_leader_formatted": format_gap(drv.gap_to_leader, drv.current_position),
                     "interval_ahead": drv.interval_ahead,
+                    "interval_ahead_formatted": format_interval(drv.interval_ahead, drv.current_position),
                 })
         return {
             "session_key": self.session_key,
@@ -708,6 +749,7 @@ class LiveSessionState:
             "current_lap": session_lap,
             "total_laps": self.total_laps or self.strategy_engine.total_laps,
             "total_drivers": len(self.drivers),
+            "fastest_lap": self.fastest_lap.model_dump() if self.fastest_lap else None,
             "drivers": drivers_meta,
         }
 
@@ -750,7 +792,11 @@ class LiveSessionState:
                     "y": norm_pos["y"] if norm_pos else 0.0,
                     "progress": norm_pos["progress"] if norm_pos else 0.0,
                     "gap_to_leader": entry.gap_to_leader,
+                    "gap_to_leader_formatted": format_gap(entry.gap_to_leader, entry.position),
                     "interval_ahead": entry.interval_ahead,
+                    "interval_ahead_formatted": format_interval(entry.interval_ahead, entry.position),
+                    "last_lap_time": entry.last_lap_time,
+                    "last_lap_time_formatted": format_lap_time(entry.last_lap_time),
                 })
         else:
             for i, drv_num in enumerate(sorted(self.drivers.keys())):
@@ -787,7 +833,11 @@ class LiveSessionState:
                     "y": norm_pos["y"] if norm_pos else 0.0,
                     "progress": norm_pos["progress"] if norm_pos else 0.0,
                     "gap_to_leader": drv.gap_to_leader,
+                    "gap_to_leader_formatted": format_gap(drv.gap_to_leader, pos),
                     "interval_ahead": drv.interval_ahead,
+                    "interval_ahead_formatted": format_interval(drv.interval_ahead, pos),
+                    "last_lap_time": drv.last_lap_time,
+                    "last_lap_time_formatted": format_lap_time(drv.last_lap_time),
                 })
         return {
             "session_key": self.session_key,
