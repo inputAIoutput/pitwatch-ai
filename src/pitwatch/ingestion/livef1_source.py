@@ -1,8 +1,12 @@
 import asyncio
+import json
 import os
 import threading
+import time
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Dict, List, Optional
+import requests
+
 from pitwatch.models.frame import (
     CarPositionTick,
     ReplayFrame,
@@ -13,31 +17,52 @@ from pitwatch.state.session import LiveSessionState
 
 try:
     from livef1.adapters.realtime_client import RealF1Client
+    from livef1.data_processing.etl import function_map
     LIVEF1_AVAILABLE = True
 except ImportError:
     LIVEF1_AVAILABLE = False
     RealF1Client = None
+    function_map = {}
+
+try:
+    from signalrcore.hub_connection_builder import HubConnectionBuilder
+    SIGNALRCORE_AVAILABLE = True
+except ImportError:
+    SIGNALRCORE_AVAILABLE = False
+    HubConnectionBuilder = None
 
 
 class LiveF1Source:
-    """Streams real-time Formula 1 session data using LiveF1 (official F1 SignalR feed)."""
+    """Streams real-time Formula 1 session data using official F1 SignalR Core / LiveF1 feed."""
 
-    TOPICS = ["Position.z", "CarData.z", "WeatherData", "RaceControlMessages", "TrackStatus"]
+    TOPICS = [
+        "Position.z",
+        "CarData.z",
+        "WeatherData",
+        "RaceControlMessages",
+        "TrackStatus",
+        "TeamRadio",
+        "SessionInfo",
+        "DriverList",
+    ]
 
     def __init__(
         self,
         session_key: int = 0,
         driver_numbers: Optional[List[int]] = None,
+        token: Optional[str] = None,
         f1_cookie: Optional[str] = None,
         poll_interval: float = 0.2,
     ):
         self.session_key = session_key
         self.driver_numbers = driver_numbers
+        self.token = token
         self.f1_cookie = f1_cookie or os.environ.get("F1_COOKIE")
         self.poll_interval = poll_interval
         self.state: Optional[LiveSessionState] = None
         self.is_running = True
         self.session_time = 0.0
+        self.session_path: str = ""
         self._queue: asyncio.Queue = asyncio.Queue()
         self._client = None
         self._client_thread = None
@@ -51,6 +76,61 @@ class LiveF1Source:
     def enqueue_batch(self, records: Dict[str, List[Dict[str, Any]]]) -> None:
         """Enqueue parsed LiveF1 batch for asynchronous consumption."""
         self._queue.put_nowait(records)
+
+    def resolve_auth_token(self) -> Optional[str]:
+        """Resolves the F1 TV subscription JWT token from CLI, env vars, cookies, or FastF1 store."""
+        # 1. Explicit token
+        if self.token and self.token.strip():
+            return self.token.strip()
+
+        # 2. Environment variables
+        for env_k in ("F1_TOKEN", "F1_SUBSCRIPTION_TOKEN"):
+            val = os.environ.get(env_k)
+            if val and val.strip():
+                return val.strip()
+
+        # 3. Extract from cookie if provided
+        cookie_str = self.f1_cookie or os.environ.get("F1_COOKIE")
+        if cookie_str:
+            extracted = self._extract_token_from_cookie(cookie_str)
+            if extracted:
+                return extracted
+
+        # 4. Check FastF1 stored authentication token (~/AppData/Local/fastf1/f1auth.json)
+        try:
+            from fastf1.internals.f1auth import AUTH_DATA_FILE
+            if AUTH_DATA_FILE.exists():
+                stored = AUTH_DATA_FILE.read_text(encoding="utf-8").strip()
+                if stored:
+                    return stored
+        except Exception:
+            pass
+
+        return None
+
+    @staticmethod
+    def _extract_token_from_cookie(cookie_str: str) -> Optional[str]:
+        """Extract subscription JWT token from raw string or loginSession cookie."""
+        clean = cookie_str.strip()
+        if clean.startswith("ey") and clean.count(".") == 2:
+            return clean
+
+        import urllib.parse
+        for part in clean.split(";"):
+            part = part.strip()
+            if part.startswith("loginSession="):
+                val = part[len("loginSession="):]
+                try:
+                    decoded = urllib.parse.unquote(val)
+                    data = json.loads(decoded)
+                    tok = data.get("data", {}).get("subscriptionToken")
+                    if tok:
+                        return tok
+                except Exception:
+                    pass
+            elif part.startswith("subscriptionToken="):
+                return part[len("subscriptionToken="):]
+        return None
 
     def process_records_batch(self, records: Dict[str, List[Dict[str, Any]]]) -> Optional[ReplayFrame]:
         """Transform LiveF1 parsed record dictionary into a PitWatch ReplayFrame."""
@@ -133,6 +213,24 @@ class LiveF1Source:
                     self.state.race_control_messages = []
                 self.state.race_control_messages.append(rcm)
 
+        # 5. Parse Team Radio (TeamRadio)
+        radio_list = records.get("TeamRadio", [])
+        if radio_list:
+            for r in radio_list:
+                drv_no_str = r.get("RacingNumber") or r.get("DriverNo")
+                path = r.get("Path", "")
+                utc = r.get("Utc", "")
+                if self.state and path:
+                    if not hasattr(self.state, "team_radios"):
+                        self.state.team_radios = []
+                    self.state.team_radios.append({
+                        "driver_number": int(drv_no_str) if drv_no_str and str(drv_no_str).isdigit() else None,
+                        "path": path,
+                        "utc": utc,
+                        "captured_at": datetime.now(timezone.utc).isoformat(),
+                    })
+                    print(f"[PitWatch AI] [RADIO] Driver #{drv_no_str} Team Radio captured: {path}")
+
         self.session_time += self.poll_interval
         now_ts = datetime.now(timezone.utc)
 
@@ -149,12 +247,92 @@ class LiveF1Source:
 
         return frame
 
-    def _start_signalr_client(self, loop: asyncio.AbstractEventLoop) -> None:
-        """Start RealF1Client SignalR stream in background thread."""
-        if not LIVEF1_AVAILABLE:
-            print("[PitWatch AI] [WARN] livef1 package is not installed.")
-            return
+    def _start_signalrcore_client(self, loop: asyncio.AbstractEventLoop, token: Optional[str]) -> None:
+        """Connects to modern F1 SignalR Core endpoint with pre-negotiation and bearer authentication."""
+        negotiate_url = "https://livetiming.formula1.com/signalrcore/negotiate"
+        connection_url = "wss://livetiming.formula1.com/signalrcore"
 
+        headers = {
+            "User-Agent": "BestHTTP",
+            "Accept-Encoding": "gzip, identity",
+        }
+        if self.f1_cookie:
+            headers["Cookie"] = self.f1_cookie
+
+        # Pre-negotiate AWSALBCORS cookie
+        try:
+            r = requests.options(negotiate_url, headers=headers, timeout=5)
+            if "AWSALBCORS" in r.cookies:
+                cors_val = f"AWSALBCORS={r.cookies['AWSALBCORS']}"
+                headers["Cookie"] = f"{headers['Cookie']}; {cors_val}" if "Cookie" in headers else cors_val
+        except Exception:
+            pass
+
+        options = {
+            "verify_ssl": True,
+            "headers": headers,
+        }
+        if token:
+            options["access_token_factory"] = lambda: token
+
+        builder = HubConnectionBuilder().with_url(connection_url, options=options)
+        hub = builder.build()
+
+        def on_open():
+            print("[PitWatch AI] [CONNECTED] Connected to Formula 1 Live Timing SignalR Core stream!")
+            hub.send("Subscribe", [self.TOPICS], on_invocation=on_subscribe_response)
+
+        def on_close():
+            print("[PitWatch AI] SignalR Core connection closed.")
+
+        def on_subscribe_response(msg):
+            if hasattr(msg, "result") and isinstance(msg.result, dict):
+                for topic, payload in msg.result.items():
+                    self._parse_and_enqueue_topic(loop, topic, payload, None)
+
+        def on_feed(msg):
+            if isinstance(msg, list) and len(msg) >= 2:
+                topic = msg[0]
+                payload = msg[1]
+                ts = msg[2] if len(msg) > 2 else None
+                self._parse_and_enqueue_topic(loop, topic, payload, ts)
+
+        hub.on_open(on_open)
+        hub.on_close(on_close)
+        hub.on("feed", on_feed)
+
+        print("[PitWatch AI] Connecting to official Formula 1 Live Timing SignalR Core stream...")
+        try:
+            hub.start()
+            self._client = hub
+            while self.is_running:
+                time.sleep(0.5)
+            hub.stop()
+        except Exception as e:
+            if not token:
+                print(f"[PitWatch AI] [WARN] F1 Live Timing SignalR error (F1 TV authentication required): {e}")
+                print("  Authenticate with your F1 TV account:")
+                print("    1) Run: .\\.venv\\Scripts\\python.exe -m fastf1 auth f1tv --authenticate")
+                print("    2) Or pass --f1-cookie / --token")
+            else:
+                print(f"[PitWatch AI] [WARN] F1 Live Timing SignalR Core error: {e}")
+
+    def _parse_and_enqueue_topic(self, loop: asyncio.AbstractEventLoop, topic: str, payload: Any, ts: Any) -> None:
+        """Parses raw SignalR payload for a given topic using LiveF1 ETL function_map."""
+        if topic == "SessionInfo" and isinstance(payload, dict):
+            if "Path" in payload:
+                self.session_path = payload["Path"]
+
+        if function_map and topic in function_map:
+            try:
+                recs = list(function_map[topic]([(ts, payload)], sessionKey=self.session_key, session_path=self.session_path))
+                if recs:
+                    loop.call_soon_threadsafe(self.enqueue_batch, {topic: recs})
+            except Exception:
+                pass
+
+    def _start_legacy_client(self, loop: asyncio.AbstractEventLoop) -> None:
+        """Fallback to RealF1Client legacy SignalR client."""
         try:
             self._client = RealF1Client(topics=self.TOPICS)
             if self.f1_cookie:
@@ -164,17 +342,36 @@ class LiveF1Source:
             async def on_records(records):
                 loop.call_soon_threadsafe(self.enqueue_batch, records)
 
-            print("[PitWatch AI] Connecting to official Formula 1 Live Timing SignalR stream...")
+            print("[PitWatch AI] Connecting to legacy Formula 1 SignalR stream...")
             self._client.run()
         except Exception as e:
-            print(f"[PitWatch AI] [WARN] F1 Live Timing SignalR error (F1 TV authentication may be required): {e}")
+            print(f"[PitWatch AI] [WARN] Legacy SignalR error: {e}")
+
+    def _start_signalr_client(self, loop: asyncio.AbstractEventLoop) -> None:
+        """Start SignalR client in background thread (SignalR Core preferred)."""
+        token = self.resolve_auth_token()
+        if not token:
+            print(
+                "[PitWatch AI] [INFO] No F1 TV subscription token found.\n"
+                "  To authenticate with F1 TV:\n"
+                "    1) Run: .\\.venv\\Scripts\\python.exe -m fastf1 auth f1tv --authenticate\n"
+                "    2) Or pass --f1-cookie / --token on CLI.\n"
+                "  Attempting connection..."
+            )
+
+        if SIGNALRCORE_AVAILABLE:
+            self._start_signalrcore_client(loop, token)
+        elif LIVEF1_AVAILABLE:
+            self._start_legacy_client(loop)
+        else:
+            print("[PitWatch AI] [WARN] Neither signalrcore nor livef1 packages are installed.")
 
     async def stream_frames(self) -> AsyncIterator[ReplayFrame]:
         """Stream frames to state and subscribers."""
         loop = asyncio.get_running_loop()
 
         # If running in live mode without manual batches, spawn SignalR client thread
-        if LIVEF1_AVAILABLE and self._queue.empty() and self.is_running:
+        if (SIGNALRCORE_AVAILABLE or LIVEF1_AVAILABLE) and self._queue.empty() and self.is_running:
             self._client_thread = threading.Thread(
                 target=self._start_signalr_client, args=(loop,), daemon=True
             )
@@ -187,9 +384,9 @@ class LiveF1Source:
                 if frame:
                     yield frame
             except asyncio.TimeoutError:
-                # Still yield empty or tick frame if needed
                 await asyncio.sleep(self.poll_interval)
                 continue
-            except Exception as e:
+            except Exception:
                 await asyncio.sleep(self.poll_interval)
                 continue
+

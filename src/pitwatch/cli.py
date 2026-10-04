@@ -135,6 +135,7 @@ async def main():
             source = LiveF1Source(
                 session_key=session_key,
                 driver_numbers=target_drivers,
+                token=args.token,
                 f1_cookie=args.f1_cookie,
                 poll_interval=0.2,
             )

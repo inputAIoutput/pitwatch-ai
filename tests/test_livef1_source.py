@@ -29,6 +29,9 @@ def test_livef1_record_transformation():
         ],
         "RaceControlMessages": [
             {"SessionKey": 11731, "Utc": "2026-10-04T07:05:00Z", "Category": "Flag", "Flag": "GREEN", "Message": "TRACK CLEAR", "Scope": "Track"}
+        ],
+        "TeamRadio": [
+            {"SessionKey": 11731, "RacingNumber": "44", "Path": "https://livetiming.formula1.com/static/TeamRadio/HAM01_44.mp3", "Utc": "2026-10-04T07:06:00Z"}
         ]
     }
 
@@ -46,6 +49,12 @@ def test_livef1_record_transformation():
     norm_pos = state.get_normalized_position(1)
     assert norm_pos is not None
     assert -1.0 <= norm_pos["x"] <= 1.0
+
+    # Verify team radio ingestion
+    assert hasattr(state, "team_radios")
+    assert len(state.team_radios) == 1
+    assert state.team_radios[0]["driver_number"] == 44
+    assert "HAM01_44.mp3" in state.team_radios[0]["path"]
 
 
 @pytest.mark.asyncio
@@ -71,3 +80,21 @@ async def test_livef1_stream_frames_generator():
     assert state.weather is not None
     assert state.weather.track_temperature == 55.0
     assert state.drivers[1].latest_telemetry.speed == 290
+
+
+def test_livef1_auth_token_resolution(monkeypatch):
+    # 1. Explicit token
+    src1 = LiveF1Source(token="custom_token_123")
+    assert src1.resolve_auth_token() == "custom_token_123"
+
+    # 2. Environment variable
+    monkeypatch.setenv("F1_TOKEN", "env_token_456")
+    src2 = LiveF1Source()
+    assert src2.resolve_auth_token() == "env_token_456"
+    monkeypatch.delenv("F1_TOKEN")
+
+    # 3. Cookie extraction
+    cookie_sample = "loginSession=%7B%22data%22%3A%7B%22subscriptionToken%22%3A%22eyJhbGciOiJSUzI1NiJ9.abc.def%22%7D%7D; other=123"
+    src3 = LiveF1Source(f1_cookie=cookie_sample)
+    assert src3.resolve_auth_token() == "eyJhbGciOiJSUzI1NiJ9.abc.def"
+
