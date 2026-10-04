@@ -37,6 +37,7 @@ def parse_args(args=None):
     parser.add_argument("--drivers", type=str, default=None, help="Comma-separated list of driver numbers (e.g. '44,1')")
     parser.add_argument("--frames", type=int, default=10, help="Number of frames to verify before stopping")
     parser.add_argument("--lap", type=int, default=1, help="Lap number to start replay from (default 1 for race start, 0 for pre-race garage)")
+    parser.add_argument("--loop", action="store_true", help="Loop playback continuously upon reaching the end of the session")
     parser.add_argument("--start-session-time", type=float, default=None, help="Start replay directly at a specific session time in seconds (e.g. --start-session-time 900.0)")
     parser.add_argument("--serve", action="store_true", help="Launch FastAPI REST & WebSocket server alongside replay")
     parser.add_argument("--source", type=str, choices=["openf1", "livef1", "livetiming", "f1tv"], default="openf1", help="Ingestion engine backend: 'openf1' (REST), 'livef1' (SignalR), or 'livetiming'/'f1tv' (F1 TV archives)")
@@ -192,8 +193,12 @@ async def main():
         app = create_app(session_state=state)
 
         async def stream_background():
-            async for _ in source.stream_frames():
-                pass
+            try:
+                async for _ in source.stream_frames(loop=args.loop):
+                    pass
+                print(f"[PitWatch AI] Historical replay reached end of session ({len(source.frames)} frames processed).")
+            except Exception as e:
+                print(f"[PitWatch AI] [ERROR in replay stream]: {e}")
 
         # Run background replay and uvicorn concurrently
         print(f"[PitWatch AI] Starting FastAPI Server on http://{args.host}:{args.port}...")

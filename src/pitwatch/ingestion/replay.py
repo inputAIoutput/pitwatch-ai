@@ -595,24 +595,29 @@ class HistoricalReplaySource(SessionSource):
         source.driver_list = driver_list_data
         return source
 
-    async def stream_frames(self) -> AsyncIterator[ReplayFrame]:
-        while self._current_index < len(self.frames):
-            if self.controller.state == PlaybackState.STOPPED:
+    async def stream_frames(self, loop: bool = False) -> AsyncIterator[ReplayFrame]:
+        while True:
+            while self._current_index < len(self.frames):
+                if self.controller.state == PlaybackState.STOPPED:
+                    return
+
+                if self.controller.state == PlaybackState.PAUSED:
+                    await asyncio.sleep(0.05)
+                    continue
+
+                frame = self.frames[self._current_index]
+                self.controller.current_session_time = frame.session_time
+
+                # Synchronize bound LiveSessionState if registered
+                if self.state is not None:
+                    self.state.ingest_frame(frame)
+
+                yield frame
+
+                self._current_index += 1
+                delay = self.time_step / self.controller.speed_multiplier
+                await asyncio.sleep(delay)
+
+            if not loop or not self.frames:
                 break
-
-            if self.controller.state == PlaybackState.PAUSED:
-                await asyncio.sleep(0.05)
-                continue
-
-            frame = self.frames[self._current_index]
-            self.controller.current_session_time = frame.session_time
-
-            # Synchronize bound LiveSessionState if registered
-            if self.state is not None:
-                self.state.ingest_frame(frame)
-
-            yield frame
-
-            self._current_index += 1
-            delay = self.time_step / self.controller.speed_multiplier
-            await asyncio.sleep(delay)
+            self._current_index = 0
