@@ -267,3 +267,38 @@ def test_load_positions_and_real_race_position_tracking():
     assert summary["drivers"][1]["current_position"] == 6
 
 
+def test_live_position_progress_auto_calculated_from_coordinates():
+    state = LiveSessionState(session_key=11731, circuit_name="Kuala Lumpur")
+
+    # Ingest a position tick without progress (progress=None)
+    frame1 = ReplayFrame(
+        session_time=10.0,
+        timestamp=datetime.now(timezone.utc),
+        positions=[
+            CarPositionTick(driver_number=3, x=0.0, y=-5200.0, progress=None),  # S/F straight
+        ],
+    )
+    state.ingest_frame(frame1)
+
+    norm_pos1 = state.get_normalized_position(3)
+    assert norm_pos1 is not None
+    assert norm_pos1["progress"] is not None
+    assert 0.0 <= norm_pos1["progress"] <= 0.05
+
+    # Move forward down the track towards Turn 4
+    frame2 = ReplayFrame(
+        session_time=15.0,
+        timestamp=datetime.now(timezone.utc),
+        positions=[
+            CarPositionTick(driver_number=3, x=-1400.0, y=-1100.0, progress=None),  # Turn 4
+        ],
+    )
+    state.ingest_frame(frame2)
+
+    norm_pos2 = state.get_normalized_position(3)
+    assert norm_pos2 is not None
+    assert norm_pos2["progress"] > norm_pos1["progress"]
+    assert 0.15 <= norm_pos2["progress"] <= 0.35
+
+
+

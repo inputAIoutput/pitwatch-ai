@@ -504,6 +504,8 @@ class LiveSessionState:
 
         # Ingest positions
         for pos in frame.positions:
+            if pos.progress is None:
+                pos.progress = self.normalizer.calculate_lap_progress(pos.x, pos.y)
             drv = self.register_driver(pos.driver_number)
             drv.update_position(pos)
 
@@ -601,7 +603,10 @@ class LiveSessionState:
             return None
 
         nx, ny = self.normalizer.normalize_point(drv.latest_position.x, drv.latest_position.y)
-        prog = self.normalizer.normalize_progress(drv.latest_position.progress)
+        if drv.latest_position.progress is not None:
+            prog = self.normalizer.normalize_progress(drv.latest_position.progress)
+        else:
+            prog = self.normalizer.calculate_lap_progress(drv.latest_position.x, drv.latest_position.y)
         speed = drv.latest_telemetry.speed if drv.latest_telemetry else 0
         return {
             "driver_number": driver_number,
