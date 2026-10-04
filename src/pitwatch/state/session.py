@@ -270,7 +270,7 @@ class LiveSessionState:
             parsed_ll = parse_lap_time(data["LastLapTime"])
             if parsed_ll is not None:
                 drv.last_lap_time = parsed_ll
-                self._check_update_fastest_lap(drv_no, parsed_ll, drv.current_lap)
+                self._check_update_fastest_lap(d_no, parsed_ll, drv.current_lap)
 
         # Best lap time (as fallback if last lap time is not yet set)
         if "BestLapTime" in data:
@@ -278,7 +278,7 @@ class LiveSessionState:
             if parsed_bl is not None:
                 if drv.last_lap_time is None:
                     drv.last_lap_time = parsed_bl
-                self._check_update_fastest_lap(drv_no, parsed_bl, drv.current_lap)
+                self._check_update_fastest_lap(d_no, parsed_bl, drv.current_lap)
 
         # Number of laps
         if "NumberOfLaps" in data:
@@ -690,6 +690,7 @@ class LiveSessionState:
                     else:
                         cmp = preset.get("compound", TyreCompound.WET).value
 
+                ll_time = drv.last_lap_time if (drv and drv.last_lap_time is not None) else entry.last_lap_time
                 drivers_meta.append({
                     "driver_number": entry.driver_number,
                     "driver_code": entry.driver_code,
@@ -699,12 +700,12 @@ class LiveSessionState:
                     "current_lap": entry.current_lap,
                     "current_compound": cmp,
                     "tyre_age_laps": entry.tyre_age_laps,
-                    "last_lap_time": entry.last_lap_time,
-                    "last_lap_time_formatted": format_lap_time(entry.last_lap_time),
+                    "last_lap_time": ll_time,
+                    "last_lap_time_formatted": format_lap_time(ll_time),
                     "gap_to_leader": entry.gap_to_leader,
-                    "gap_to_leader_formatted": format_gap(entry.gap_to_leader, entry.position),
+                    "gap_to_leader_formatted": entry.gap_to_leader_formatted or format_gap(entry.gap_to_leader, entry.position),
                     "interval_ahead": entry.interval_ahead,
-                    "interval_ahead_formatted": format_interval(entry.interval_ahead, entry.position),
+                    "interval_ahead_formatted": entry.interval_ahead_formatted or format_interval(entry.interval_ahead, entry.position),
                 })
         else:
             if self.drivers:
@@ -792,11 +793,11 @@ class LiveSessionState:
                     "y": norm_pos["y"] if norm_pos else 0.0,
                     "progress": norm_pos["progress"] if norm_pos else 0.0,
                     "gap_to_leader": entry.gap_to_leader,
-                    "gap_to_leader_formatted": format_gap(entry.gap_to_leader, entry.position),
+                    "gap_to_leader_formatted": entry.gap_to_leader_formatted or format_gap(entry.gap_to_leader, entry.position),
                     "interval_ahead": entry.interval_ahead,
-                    "interval_ahead_formatted": format_interval(entry.interval_ahead, entry.position),
-                    "last_lap_time": entry.last_lap_time,
-                    "last_lap_time_formatted": format_lap_time(entry.last_lap_time),
+                    "interval_ahead_formatted": entry.interval_ahead_formatted or format_interval(entry.interval_ahead, entry.position),
+                    "last_lap_time": drv.last_lap_time if drv.last_lap_time is not None else entry.last_lap_time,
+                    "last_lap_time_formatted": format_lap_time(drv.last_lap_time if drv.last_lap_time is not None else entry.last_lap_time),
                 })
         else:
             for i, drv_num in enumerate(sorted(self.drivers.keys())):

@@ -106,3 +106,26 @@ def test_get_telemetry_live_contains_continuous_lap_progress():
     assert ant["progress"] is not None
     assert 0.15 <= ant["progress"] <= 0.35
 
+
+def test_get_session_current_includes_fastest_lap_and_formatted_strings(populated_state):
+    # Set fastest lap on populated_state
+    populated_state.drivers[44].last_lap_time = 92.519
+    populated_state._check_update_fastest_lap(driver_number=44, lap_time=92.519, lap_number=3)
+
+    app = create_app(session_state=populated_state)
+    client = TestClient(app)
+
+    response = client.get("/v1/session/current")
+    assert response.status_code == 200
+    data = response.json()
+
+    assert data["fastest_lap"] is not None
+    assert data["fastest_lap"]["driver_code"] == "HAM"
+    assert data["fastest_lap"]["lap_time"] == 92.519
+    assert data["fastest_lap"]["lap_time_formatted"] == "01:32.519"
+
+    ham = data["drivers"][0]
+    assert ham["last_lap_time_formatted"] == "01:32.519"
+    assert ham["gap_to_leader_formatted"] == "LEADER"
+    assert ham["interval_ahead_formatted"] == "-"
+
