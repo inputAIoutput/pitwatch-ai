@@ -56,3 +56,26 @@ def test_websocket_client_disconnect_handling(active_state):
     with client.websocket_connect("/v1/stream/positions?interval=0.05") as ws:
         _ = ws.receive_json()
         ws.close()
+
+
+def test_websocket_stream_positions_emits_valid_lap_progress():
+    state = LiveSessionState(session_key=11731, circuit_name="Kuala Lumpur")
+    app = create_app(session_state=state)
+
+    frame = ReplayFrame(
+        session_time=30.0,
+        timestamp=datetime.now(timezone.utc),
+        positions=[
+            CarPositionTick(driver_number=3, x=-2200.0, y=2000.0, progress=None),
+        ],
+    )
+    state.ingest_frame(frame)
+
+    client = TestClient(app)
+    with client.websocket_connect("/v1/stream/positions?interval=0.05") as ws:
+        pos_msg = ws.receive_json()
+        assert pos_msg["type"] == "positions"
+        ver = next(p for p in pos_msg["positions"] if p["driver_number"] == 3)
+        assert ver["progress"] > 0.0
+        assert 0.20 <= ver["progress"] <= 0.45
+

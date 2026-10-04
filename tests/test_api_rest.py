@@ -77,3 +77,32 @@ def test_session_current_empty_state():
     response = client.get("/v1/session/current")
     assert response.status_code == 200
     assert response.json()["total_drivers"] == 0
+
+
+def test_get_telemetry_live_contains_continuous_lap_progress():
+    state = LiveSessionState(session_key=11731, circuit_name="Kuala Lumpur")
+    app = create_app(session_state=state)
+
+    # Ingest position with progress=None
+    frame = ReplayFrame(
+        session_time=30.0,
+        timestamp=datetime.now(timezone.utc),
+        positions=[
+            CarPositionTick(driver_number=12, x=-1400.0, y=-1100.0, progress=None),
+        ],
+        telemetry=[
+            TelemetryTick(driver_number=12, speed=245, gear=5, throttle=80, brake=0, drs=0, rpm=11200),
+        ],
+    )
+    state.ingest_frame(frame)
+
+    client = TestClient(app)
+    response = client.get("/v1/telemetry/live")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["vehicles"]) >= 1
+
+    ant = next(v for v in data["vehicles"] if v["driver_number"] == 12)
+    assert ant["progress"] is not None
+    assert 0.15 <= ant["progress"] <= 0.35
+
