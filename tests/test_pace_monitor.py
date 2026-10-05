@@ -218,3 +218,35 @@ def test_root_cause_tyre_cliff():
     assert anomaly.root_cause == SlowLapRootCause.TYRE_CLIFF
     assert "cliff" in anomaly.details.lower() or "degradation" in anomaly.details.lower()
 
+
+def test_session_state_pace_monitor():
+    from pitwatch.state.session import LiveSessionState
+
+    state = LiveSessionState(session_key=11731, circuit_name="Sepang")
+    state.register_driver(driver_number=1, driver_code="VER")
+    state.register_driver(driver_number=4, driver_code="NOR")
+
+    # Ingest Lap 1 for VER (90.0s) and NOR (90.5s)
+    state.update_timing_line("1", {"NumberOfLaps": 1, "LastLapTime": "1:30.000", "Position": "1", "GapToLeader": "LEADER"})
+    state.update_timing_line("4", {"NumberOfLaps": 1, "LastLapTime": "1:30.500", "Position": "2", "GapToLeader": "+0.500", "IntervalToPositionAhead": "+0.500"})
+
+    # Ingest Lap 2 for VER (89.8s) and NOR (90.4s)
+    state.update_timing_line("1", {"NumberOfLaps": 2, "LastLapTime": "1:29.800", "Position": "1", "GapToLeader": "LEADER"})
+    state.update_timing_line("4", {"NumberOfLaps": 2, "LastLapTime": "1:30.400", "Position": "2", "GapToLeader": "+1.100", "IntervalToPositionAhead": "+1.100"})
+
+    pace_resp = state.get_pace_monitor()
+    assert pace_resp.session_key == 11731
+    assert len(pace_resp.drivers) == 2
+
+    ver_status = next(d for d in pace_resp.drivers if d.driver_number == 1)
+    assert ver_status.driver_code == "VER"
+    assert ver_status.stint_baseline_pace == 89.8
+    assert ver_status.last_lap_time == 89.8
+    assert ver_status.trend in (PaceTrend.IMPROVING, PaceTrend.STABLE)
+
+    nor_status = next(d for d in pace_resp.drivers if d.driver_number == 4)
+    assert nor_status.driver_code == "NOR"
+    assert nor_status.stint_baseline_pace == 90.4
+    assert nor_status.trend == PaceTrend.STABLE
+
+

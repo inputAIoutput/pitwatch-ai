@@ -5,6 +5,7 @@ from pitwatch.state.driver import DriverState, LeaderboardEntry, TyreCompound, F
 from pitwatch.state.geometry import CoordinateNormalizer, CircuitBounds
 from pitwatch.state.timing import format_lap_time, format_gap, format_interval, FastestLapRecord
 from pitwatch.intelligence.weather import EnvironmentalEvaluator
+from pitwatch.intelligence.pace import PaceEvaluator, PaceMonitorResponse
 from pitwatch.strategy.engine import DeterministicStrategyEngine
 
 
@@ -99,6 +100,7 @@ class LiveSessionState:
         self.drivers: Dict[int, DriverState] = {}
         self.weather: Optional[WeatherTick] = None
         self.weather_evaluator = EnvironmentalEvaluator()
+        self.pace_evaluator = PaceEvaluator()
         self.strategy_engine = DeterministicStrategyEngine(circuit_name=circuit_name)
         self.current_session_time: float = 0.0
         self.current_lap: int = 1
@@ -437,6 +439,22 @@ class LiveSessionState:
                     drv.best_lap_time = parsed_ll
                 self._check_update_fastest_lap(d_no, parsed_ll, drv.current_lap)
 
+                stint_no = max(drv.stints.keys(), default=1) if drv.stints else 1
+                self.pace_evaluator.record_lap(
+                    driver_number=d_no,
+                    driver_code=drv.driver_code,
+                    lap_number=drv.current_lap,
+                    lap_time=parsed_ll,
+                    stint_number=stint_no,
+                    compound=drv.current_compound.value,
+                    tyre_age_laps=drv.tyre_age_laps,
+                    is_pit_lap=drv.in_pit,
+                    session_time=self.current_session_time,
+                    current_position=drv.current_position,
+                    interval_ahead=drv.interval_ahead,
+                    active_race_control_messages=self.race_control_messages,
+                )
+
         # Best lap time
         if "BestLapTime" in data:
             bl_raw = data["BestLapTime"]
@@ -555,6 +573,22 @@ class LiveSessionState:
                 if drv.best_lap_time is None or parsed_ll < drv.best_lap_time:
                     drv.best_lap_time = parsed_ll
                 self._check_update_fastest_lap(d_no, parsed_ll, drv.current_lap)
+
+                stint_no = max(drv.stints.keys(), default=1) if drv.stints else 1
+                self.pace_evaluator.record_lap(
+                    driver_number=d_no,
+                    driver_code=drv.driver_code,
+                    lap_number=drv.current_lap,
+                    lap_time=parsed_ll,
+                    stint_number=stint_no,
+                    compound=drv.current_compound.value,
+                    tyre_age_laps=drv.tyre_age_laps,
+                    is_pit_lap=drv.in_pit,
+                    session_time=self.current_session_time,
+                    current_position=drv.current_position,
+                    interval_ahead=drv.interval_ahead,
+                    active_race_control_messages=self.race_control_messages,
+                )
 
         bl_val = record.get("BestLapTime_Value") or record.get("BestLapTime")
         if bl_val is not None:
@@ -1363,5 +1397,13 @@ class LiveSessionState:
             "total_laps": self.strategy_engine.total_laps,
             "competitors": competitors,
         }
+
+    def get_pace_monitor(self) -> PaceMonitorResponse:
+        """Returns structured pace degradation and anomaly monitor response for active drivers."""
+        return self.pace_evaluator.get_pace_monitor(
+            session_key=self.session_key,
+            session_time=self.current_session_time,
+            current_lap=self.current_lap,
+        )
 
 
