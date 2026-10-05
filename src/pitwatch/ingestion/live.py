@@ -85,6 +85,15 @@ class LiveOpenF1Source:
                 if pos_res and self.state:
                     self.state.load_positions(pos_res)
 
+                # Periodically refresh live stint data (~every 10s at 400ms polling)
+                if polls_count % 25 == 1 and self.state:
+                    try:
+                        stints_res = await self.client.get_stints(self.session_key, bypass_cache=True)
+                        if isinstance(stints_res, list) and stints_res:
+                            self.state.load_stints(stints_res)
+                    except Exception:
+                        pass
+
                 # Parse weather tick
                 latest_wx = None
                 if wx_res:

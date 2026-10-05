@@ -249,7 +249,11 @@ class LiveSessionState:
                 # Max stint index represents current active stint
                 max_stint_idx = max(drv.stints.keys())
                 if max_stint_idx > 0:
-                    drv.pit_stops = max(drv.pit_stops, max_stint_idx)
+                    if max_stint_idx > drv.pit_stops:
+                        drv.pit_stops = max_stint_idx
+                        drv.tyre_age_laps = 0
+                    else:
+                        drv.pit_stops = max(drv.pit_stops, max_stint_idx)
 
                 curr_stint = drv.stints[max_stint_idx]
                 cmp = curr_stint.get("Compound")
@@ -430,6 +434,37 @@ class LiveSessionState:
             elif drv.current_position > 1 and drv.last_known_interval_ahead is not None:
                 drv.interval_ahead = drv.last_known_interval_ahead
 
+        # Number of laps
+        if "NumberOfLaps" in data:
+            try:
+                nl = int(data["NumberOfLaps"])
+                if nl > 0:
+                    if nl > drv.current_lap:
+                        drv.tyre_age_laps += (nl - drv.current_lap)
+                    drv.current_lap = nl
+                    self.current_lap = max(self.current_lap, nl)
+            except Exception:
+                pass
+
+        # Pit tracking & autonomous tyre age reset
+        was_in_pit = drv.in_pit
+        if "InPit" in data:
+            drv.in_pit = bool(data["InPit"])
+        if data.get("PitOut"):
+            drv.in_pit = False
+
+        if was_in_pit and not drv.in_pit:
+            drv.tyre_age_laps = 0
+
+        if "NumberOfPitStops" in data:
+            try:
+                new_stops = int(data["NumberOfPitStops"])
+                if new_stops > drv.pit_stops:
+                    drv.pit_stops = new_stops
+                    drv.tyre_age_laps = 0
+            except Exception:
+                pass
+
         # Last lap time
         if "LastLapTime" in data:
             parsed_ll = parse_lap_time(data["LastLapTime"])
@@ -439,7 +474,7 @@ class LiveSessionState:
                     drv.best_lap_time = parsed_ll
                 self._check_update_fastest_lap(d_no, parsed_ll, drv.current_lap)
 
-                stint_no = max(drv.stints.keys(), default=1) if drv.stints else 1
+                stint_no = drv.pit_stops + 1
                 self.pace_evaluator.record_lap(
                     driver_number=d_no,
                     driver_code=drv.driver_code,
@@ -466,28 +501,6 @@ class LiveSessionState:
                 if drv.best_lap_time is None or parsed_bl < drv.best_lap_time:
                     drv.best_lap_time = parsed_bl
                 self._check_update_fastest_lap(d_no, parsed_bl, lap_num)
-
-        # Number of laps
-        if "NumberOfLaps" in data:
-            try:
-                nl = int(data["NumberOfLaps"])
-                if nl > 0:
-                    if nl > drv.current_lap:
-                        drv.tyre_age_laps += (nl - drv.current_lap)
-                    drv.current_lap = nl
-                    self.current_lap = max(self.current_lap, nl)
-            except Exception:
-                pass
-
-        if "InPit" in data:
-            drv.in_pit = bool(data["InPit"])
-        if data.get("PitOut"):
-            drv.in_pit = False
-        if "NumberOfPitStops" in data:
-            try:
-                drv.pit_stops = int(data["NumberOfPitStops"])
-            except Exception:
-                pass
 
     def update_timing_record(self, record: dict) -> None:
         """Update timing metrics from a flattened record (e.g. from livef1 function_map)."""
@@ -564,6 +577,37 @@ class LiveSessionState:
             elif drv.current_position > 1 and drv.last_known_interval_ahead is not None:
                 drv.interval_ahead = drv.last_known_interval_ahead
 
+        # Number of laps
+        if "NumberOfLaps" in record:
+            try:
+                nl = int(record["NumberOfLaps"])
+                if nl > 0:
+                    if nl > drv.current_lap:
+                        drv.tyre_age_laps += (nl - drv.current_lap)
+                    drv.current_lap = nl
+                    self.current_lap = max(self.current_lap, nl)
+            except Exception:
+                pass
+
+        # Pit tracking & autonomous tyre age reset
+        was_in_pit = drv.in_pit
+        if "InPit" in record:
+            drv.in_pit = bool(record["InPit"])
+        if record.get("PitOut"):
+            drv.in_pit = False
+
+        if was_in_pit and not drv.in_pit:
+            drv.tyre_age_laps = 0
+
+        if "NumberOfPitStops" in record:
+            try:
+                new_stops = int(record["NumberOfPitStops"])
+                if new_stops > drv.pit_stops:
+                    drv.pit_stops = new_stops
+                    drv.tyre_age_laps = 0
+            except Exception:
+                pass
+
         # Last lap time
         ll_val = record.get("LastLapTime_Value") or record.get("LastLapTime")
         if ll_val is not None:
@@ -574,7 +618,7 @@ class LiveSessionState:
                     drv.best_lap_time = parsed_ll
                 self._check_update_fastest_lap(d_no, parsed_ll, drv.current_lap)
 
-                stint_no = max(drv.stints.keys(), default=1) if drv.stints else 1
+                stint_no = drv.pit_stops + 1
                 self.pace_evaluator.record_lap(
                     driver_number=d_no,
                     driver_code=drv.driver_code,
@@ -599,28 +643,6 @@ class LiveSessionState:
                 if drv.best_lap_time is None or parsed_bl < drv.best_lap_time:
                     drv.best_lap_time = parsed_bl
                 self._check_update_fastest_lap(d_no, parsed_bl, drv.current_lap)
-
-        # Number of laps
-        if "NumberOfLaps" in record:
-            try:
-                nl = int(record["NumberOfLaps"])
-                if nl > 0:
-                    if nl > drv.current_lap:
-                        drv.tyre_age_laps += (nl - drv.current_lap)
-                    drv.current_lap = nl
-                    self.current_lap = max(self.current_lap, nl)
-            except Exception:
-                pass
-
-        if "InPit" in record:
-            drv.in_pit = bool(record["InPit"])
-        if record.get("PitOut"):
-            drv.in_pit = False
-        if "NumberOfPitStops" in record:
-            try:
-                drv.pit_stops = int(record["NumberOfPitStops"])
-            except Exception:
-                pass
 
     def register_driver(
         self,
@@ -801,6 +823,9 @@ class LiveSessionState:
             lap_start = active_stint.get("lap_start") or 1
             laps_on_tyre = max(0, curr_lap - lap_start)
             drv.set_compound(compound, tyre_age_at_start=tyre_age_at_start + laps_on_tyre)
+            stint_idx = int(active_stint.get("stint_number", 1))
+            drv.pit_stops = max(drv.pit_stops, max(0, stint_idx - 1))
+            drv.stints[stint_idx] = active_stint
 
     def _update_grid_slick_ratio(self) -> None:
         """Sync active grid tyre compounds into the weather evaluator to trigger slick crossover if >= 50%."""

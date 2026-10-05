@@ -753,6 +753,72 @@ def test_simulate_pit_rejoin_hygiene_with_retired_and_missing_gap_cars():
     assert sim.projected_gap_to_leader == 26.5
 
 
+def test_autonomous_tyre_age_reset_on_pit_stop_same_compound():
+    state = LiveSessionState(session_key=11731, circuit_name="Sepang")
+    drv = state.register_driver(driver_number=1, driver_code="VER")
+    drv.set_compound("HARD")
+    drv.tyre_age_laps = 22
+    assert drv.pit_stops == 0
+
+    # Pits and stays on HARD (no compound name change)
+    state.update_timing_line("1", {"NumberOfLaps": 23, "NumberOfPitStops": 1, "InPit": True})
+    assert drv.pit_stops == 1
+    assert drv.tyre_age_laps == 0
+    assert drv.current_compound.value == "HARD"
+
+
+def test_autonomous_tyre_age_reset_on_pit_out():
+    state = LiveSessionState(session_key=11731, circuit_name="Sepang")
+    drv = state.register_driver(driver_number=44, driver_code="HAM")
+    drv.set_compound("MEDIUM")
+    drv.tyre_age_laps = 18
+
+    # Driver in pit
+    state.update_timing_line("44", {"InPit": True})
+    assert drv.in_pit is True
+    assert drv.tyre_age_laps == 18
+
+    # Driver pits out
+    state.update_timing_line("44", {"PitOut": True})
+    assert drv.in_pit is False
+    assert drv.tyre_age_laps == 0
+
+
+def test_unified_stint_numbering_across_feeds():
+    state = LiveSessionState(session_key=11731, circuit_name="Sepang")
+    drv = state.register_driver(driver_number=63, driver_code="RUS")
+
+    # Stint 1 (0 pit stops)
+    state.update_timing_line("63", {"NumberOfLaps": 1, "LastLapTime": "1:35.000"})
+    pace_status = state.get_pace_monitor()
+    rus_pace = next(d for d in pace_status.drivers if d.driver_number == 63)
+    assert rus_pace.stint_number == 1
+
+    # After 1 pit stop -> Stint 2
+    state.update_timing_line("63", {"NumberOfLaps": 15, "NumberOfPitStops": 1, "LastLapTime": "1:34.500"})
+    pace_status = state.get_pace_monitor()
+    rus_pace = next(d for d in pace_status.drivers if d.driver_number == 63)
+    assert rus_pace.stint_number == 2
+
+
+def test_openf1_stint_loading_updates_pit_stops_and_stints():
+    state = LiveSessionState(session_key=11731, circuit_name="Sepang")
+    drv = state.register_driver(driver_number=11, driver_code="PER")
+    drv.current_lap = 12
+
+    openf1_stints = [
+        {"driver_number": 11, "stint_number": 1, "lap_start": 1, "lap_end": 10, "compound": "MEDIUM", "tyre_age_at_start": 0},
+        {"driver_number": 11, "stint_number": 2, "lap_start": 11, "lap_end": 25, "compound": "HARD", "tyre_age_at_start": 0},
+    ]
+    state.load_stints(openf1_stints)
+
+    assert drv.current_compound.value == "HARD"
+    assert drv.tyre_age_laps == 1  # 12 - 11 = 1 lap on this tyre
+    assert drv.pit_stops == 1
+    assert 2 in drv.stints
+
+
+
 
 
 
