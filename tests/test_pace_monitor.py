@@ -114,3 +114,107 @@ def test_pace_evaluator_delta_and_trend_classification():
     status5 = evaluator.evaluate_driver(driver_number=1)
     assert status5.trend == PaceTrend.CLIFF
     assert status5.trend_color == TrendColor.RED
+
+
+def test_root_cause_pit_stop():
+    evaluator = PaceEvaluator()
+    evaluator.record_lap(44, "HAM", 1, 90.0, stint_number=1, compound="HARD")
+    evaluator.record_lap(44, "HAM", 2, 89.8, stint_number=1, compound="HARD")
+
+    # In-lap / pit stop lap: 114.0s with is_pit_lap=True
+    anomaly = evaluator.record_lap(
+        driver_number=44,
+        driver_code="HAM",
+        lap_number=3,
+        lap_time=114.0,
+        stint_number=1,
+        compound="HARD",
+        is_pit_lap=True,
+    )
+    assert anomaly is not None
+    assert anomaly.root_cause == SlowLapRootCause.PIT_STOP
+    assert "pit" in anomaly.details.lower()
+
+
+def test_root_cause_vsc_or_sc():
+    evaluator = PaceEvaluator()
+    evaluator.record_lap(4, "NOR", 1, 88.5, stint_number=1, compound="MEDIUM")
+    evaluator.record_lap(4, "NOR", 2, 88.6, stint_number=1, compound="MEDIUM")
+
+    # Lap 3 has VSC deployed
+    rcms = [{"message": "VIRTUAL SAFETY CAR DEPLOYED", "flag": "YELLOW", "category": "SafetyCar"}]
+    anomaly = evaluator.record_lap(
+        driver_number=4,
+        driver_code="NOR",
+        lap_number=3,
+        lap_time=110.2,
+        stint_number=1,
+        compound="MEDIUM",
+        active_race_control_messages=rcms,
+    )
+    assert anomaly is not None
+    assert anomaly.root_cause == SlowLapRootCause.VSC_OR_SC
+    assert "safety car" in anomaly.details.lower() or "vsc" in anomaly.details.lower()
+
+
+def test_root_cause_yellow_flag():
+    evaluator = PaceEvaluator()
+    evaluator.record_lap(16, "LEC", 1, 89.0, stint_number=1, compound="SOFT")
+    evaluator.record_lap(16, "LEC", 2, 89.1, stint_number=1, compound="SOFT")
+
+    # Lap 3 has yellow flag in sector 2
+    rcms = [{"message": "YELLOW IN SECTOR 2", "flag": "YELLOW", "category": "Flag", "scope": "Sector"}]
+    anomaly = evaluator.record_lap(
+        driver_number=16,
+        driver_code="LEC",
+        lap_number=3,
+        lap_time=90.2,
+        stint_number=1,
+        compound="SOFT",
+        active_race_control_messages=rcms,
+    )
+    assert anomaly is not None
+    assert anomaly.root_cause == SlowLapRootCause.YELLOW_FLAG
+    assert "yellow flag" in anomaly.details.lower()
+
+
+def test_root_cause_traffic():
+    evaluator = PaceEvaluator()
+    evaluator.record_lap(81, "PIA", 1, 90.0, stint_number=1, compound="HARD")
+    evaluator.record_lap(81, "PIA", 2, 90.1, stint_number=1, compound="HARD")
+
+    # Lap 3 has dirty air traffic (interval ahead 0.7s <= 1.2s)
+    anomaly = evaluator.record_lap(
+        driver_number=81,
+        driver_code="PIA",
+        lap_number=3,
+        lap_time=90.9,
+        stint_number=1,
+        compound="HARD",
+        interval_ahead=0.7,
+    )
+    assert anomaly is not None
+    assert anomaly.root_cause == SlowLapRootCause.TRAFFIC
+    assert "traffic" in anomaly.details.lower() or "dirty air" in anomaly.details.lower()
+
+
+def test_root_cause_tyre_cliff():
+    evaluator = PaceEvaluator()
+    evaluator.record_lap(12, "ANT", 1, 90.0, stint_number=1, compound="SOFT", tyre_age_laps=1)
+    evaluator.record_lap(12, "ANT", 2, 90.2, stint_number=1, compound="SOFT", tyre_age_laps=2)
+
+    # Lap 18 on old softs: sudden 1.8s drop to 91.8s without flags or traffic
+    anomaly = evaluator.record_lap(
+        driver_number=12,
+        driver_code="ANT",
+        lap_number=18,
+        lap_time=91.8,
+        stint_number=1,
+        compound="SOFT",
+        tyre_age_laps=18,
+        interval_ahead=5.5,  # clean air
+    )
+    assert anomaly is not None
+    assert anomaly.root_cause == SlowLapRootCause.TYRE_CLIFF
+    assert "cliff" in anomaly.details.lower() or "degradation" in anomaly.details.lower()
+
