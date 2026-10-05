@@ -554,6 +554,88 @@ def test_pit_stop_tracking_and_monotonic_gap_sorting():
     assert gaps == sorted(gaps)
 
 
+def test_tyre_age_accumulation_across_laps_and_stints():
+    state = LiveSessionState(session_key=11731, circuit_name="Sepang")
+    state.register_driver(driver_number=1, driver_code="VER")
+
+    # 1. Starting stint on INTERMEDIATE, TotalLaps: 0
+    state.update_timing_app_data({
+        "Lines": {
+            "1": {
+                "Stints": {
+                    "0": {"Compound": "INTERMEDIATE", "TotalLaps": 0, "StartLaps": 0}
+                }
+            }
+        }
+    })
+    assert state.drivers[1].current_compound.value == "INTERMEDIATE"
+    assert state.drivers[1].tyre_age_laps == 0
+
+    # 2. TimingData reports lap 1, lap 2, lap 3 completion
+    state.update_timing_line("1", {"NumberOfLaps": 1})
+    assert state.drivers[1].current_lap == 1
+
+    state.update_timing_line("1", {"NumberOfLaps": 2})
+    assert state.drivers[1].current_lap == 2
+    assert state.drivers[1].tyre_age_laps == 1  # 1 completed lap on this set
+
+    state.update_timing_line("1", {"NumberOfLaps": 3})
+    assert state.drivers[1].current_lap == 3
+    assert state.drivers[1].tyre_age_laps == 2
+
+    # 3. TimingAppData micro-update arrives with official TotalLaps: 2
+    state.update_timing_app_data({
+        "Lines": {
+            "1": {
+                "Stints": {
+                    "0": {"TotalLaps": 2}
+                }
+            }
+        }
+    })
+    assert state.drivers[1].current_compound.value == "INTERMEDIATE"
+    assert state.drivers[1].tyre_age_laps == 2
+
+    # 4. Driver pits for HARD tyres (Stint 1)
+    state.update_timing_app_data({
+        "Lines": {
+            "1": {
+                "Stints": {
+                    "1": {"Compound": "HARD", "TotalLaps": 0, "StartLaps": 0}
+                }
+            }
+        }
+    })
+    assert state.drivers[1].pit_stops == 1
+    assert state.drivers[1].current_compound.value == "HARD"
+    assert state.drivers[1].tyre_age_laps == 0
+
+    # 5. Subsequent micro-update sends LapTime without TotalLaps — tyre age must NOT be wiped!
+    state.update_timing_app_data({
+        "Lines": {
+            "1": {
+                "Stints": {
+                    "1": {"LapTime": "1:40.123"}
+                }
+            }
+        }
+    })
+    assert state.drivers[1].current_compound.value == "HARD"
+    assert state.drivers[1].tyre_age_laps == 0
+
+    # 6. Official TotalLaps updates to 1
+    state.update_timing_app_data({
+        "Lines": {
+            "1": {
+                "Stints": {
+                    "1": {"TotalLaps": 1}
+                }
+            }
+        }
+    })
+    assert state.drivers[1].tyre_age_laps == 1
+
+
 
 
 

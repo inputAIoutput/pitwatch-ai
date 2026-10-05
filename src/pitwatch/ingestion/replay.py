@@ -508,7 +508,19 @@ class HistoricalReplaySource(SessionSource):
                     if k not in merged_ta:
                         merged_ta[k] = {}
                     if isinstance(v, dict):
-                        merged_ta[k].update(v)
+                        for sub_k, sub_v in v.items():
+                            if sub_k == "Stints" and isinstance(sub_v, dict):
+                                if "Stints" not in merged_ta[k] or not isinstance(merged_ta[k]["Stints"], dict):
+                                    merged_ta[k]["Stints"] = {}
+                                for s_idx, s_val in sub_v.items():
+                                    if s_idx not in merged_ta[k]["Stints"]:
+                                        merged_ta[k]["Stints"][s_idx] = {}
+                                    if isinstance(s_val, dict):
+                                        merged_ta[k]["Stints"][s_idx].update(s_val)
+                                    else:
+                                        merged_ta[k]["Stints"][s_idx] = s_val
+                            else:
+                                merged_ta[k][sub_k] = sub_v
                 ta_ptr += 1
             if merged_ta:
                 frame_ta = {"Lines": merged_ta}
@@ -615,7 +627,16 @@ class HistoricalReplaySource(SessionSource):
                 yield frame
 
                 self._current_index += 1
-                delay = self.time_step / self.controller.speed_multiplier
+                if self._current_index >= len(self.frames):
+                    break
+
+                next_frame = self.frames[self._current_index]
+                dt = next_frame.session_time - frame.session_time
+                if dt <= 0.0 or dt > 5.0:
+                    dt = self.time_step
+
+                speed = max(0.1, self.controller.speed_multiplier)
+                delay = max(0.001, dt / speed)
                 await asyncio.sleep(delay)
 
             if not loop or not self.frames:

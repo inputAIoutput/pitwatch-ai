@@ -214,18 +214,6 @@ class LiveSessionState:
             num = int(d_no)
             if num >= 100:
                 continue
-            stints_raw = l_data.get("Stints")
-            stints: List[dict] = []
-            if isinstance(stints_raw, list):
-                stints = [s for s in stints_raw if isinstance(s, dict)]
-            elif isinstance(stints_raw, dict):
-                # Live timing sometimes sends stints indexed by string key {"0": {...}, "1": {...}}
-                try:
-                    sorted_keys = sorted(stints_raw.keys(), key=lambda k: int(k) if str(k).isdigit() else 0)
-                    stints = [stints_raw[k] for k in sorted_keys if isinstance(stints_raw[k], dict)]
-                except Exception:
-                    stints = [v for v in stints_raw.values() if isinstance(v, dict)]
-
             drv = self.register_driver(driver_number=num)
             line_val = l_data.get("Line")
             if line_val is not None and str(line_val).isdigit():
@@ -233,23 +221,39 @@ class LiveSessionState:
                 if l_pos > 0:
                     drv.current_position = l_pos
 
-            if stints:
-                if len(stints) > 1:
-                    drv.pit_stops = max(drv.pit_stops, len(stints) - 1)
-                latest_stint = stints[-1]
-                cmp = latest_stint.get("Compound")
-                total_laps = latest_stint.get("TotalLaps")
-                start_laps = latest_stint.get("StartLaps")
-                tyre_age = 0
-                if total_laps is not None and str(total_laps).isdigit():
-                    tyre_age = int(total_laps)
-                elif start_laps is not None and str(start_laps).isdigit():
-                    tyre_age = int(start_laps)
+            stints_raw = l_data.get("Stints")
+            if stints_raw:
+                if isinstance(stints_raw, dict):
+                    for k, s_dict in stints_raw.items():
+                        if isinstance(s_dict, dict) and str(k).isdigit():
+                            s_idx = int(k)
+                            if s_idx not in drv.stints:
+                                drv.stints[s_idx] = {}
+                            drv.stints[s_idx].update(s_dict)
+                elif isinstance(stints_raw, list):
+                    for s_idx, s_dict in enumerate(stints_raw):
+                        if isinstance(s_dict, dict):
+                            if s_idx not in drv.stints:
+                                drv.stints[s_idx] = {}
+                            drv.stints[s_idx].update(s_dict)
 
+            if drv.stints:
+                # Max stint index represents current active stint
+                max_stint_idx = max(drv.stints.keys())
+                if max_stint_idx > 0:
+                    drv.pit_stops = max(drv.pit_stops, max_stint_idx)
+
+                curr_stint = drv.stints[max_stint_idx]
+                cmp = curr_stint.get("Compound")
                 if cmp:
-                    drv.set_compound(cmp, tyre_age_at_start=tyre_age)
-                else:
-                    drv.tyre_age_laps = tyre_age
+                    drv.set_compound(cmp)
+
+                total_laps = curr_stint.get("TotalLaps")
+                start_laps = curr_stint.get("StartLaps")
+                if total_laps is not None and str(total_laps).isdigit():
+                    drv.tyre_age_laps = int(total_laps)
+                elif start_laps is not None and str(start_laps).isdigit() and drv.tyre_age_laps == 0:
+                    drv.tyre_age_laps = int(start_laps)
 
         self._update_grid_slick_ratio()
 
@@ -422,6 +426,8 @@ class LiveSessionState:
             try:
                 nl = int(data["NumberOfLaps"])
                 if nl > 0:
+                    if nl > drv.current_lap:
+                        drv.tyre_age_laps += (nl - drv.current_lap)
                     drv.current_lap = nl
                     self.current_lap = max(self.current_lap, nl)
             except Exception:
@@ -520,6 +526,8 @@ class LiveSessionState:
             try:
                 nl = int(record["NumberOfLaps"])
                 if nl > 0:
+                    if nl > drv.current_lap:
+                        drv.tyre_age_laps += (nl - drv.current_lap)
                     drv.current_lap = nl
                     self.current_lap = max(self.current_lap, nl)
             except Exception:
@@ -1011,7 +1019,7 @@ class LiveSessionState:
                     "current_position": entry.position,
                     "current_lap": entry.current_lap,
                     "current_compound": cmp,
-                    "tyre_age_laps": entry.tyre_age_laps,
+                    "tyre_age_laps": drv.tyre_age_laps if drv else entry.tyre_age_laps,
                     "in_pit": drv.in_pit if drv else getattr(entry, "in_pit", False),
                     "pit_stops": drv.pit_stops if drv else getattr(entry, "pit_stops", 0),
                     "last_lap_time": ll_time,

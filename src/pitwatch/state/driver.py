@@ -101,19 +101,27 @@ class DriverState:
 
         self.latest_position: Optional[CarPositionTick] = None
         self.latest_telemetry: Optional[TelemetryTick] = None
+        self.stints: Dict[int, dict] = {}
 
         # Fixed rolling 10-lap ring buffer
         self.rolling_laps: Deque[LapSummary] = deque(maxlen=10)
 
-    def set_compound(self, compound: Union[TyreCompound, str], tyre_age_at_start: int = 0) -> None:
+    def set_compound(self, compound: Union[TyreCompound, str], tyre_age_at_start: Optional[int] = None) -> None:
         if isinstance(compound, str):
             try:
-                self.current_compound = TyreCompound(compound.upper())
+                target_cmp = TyreCompound(compound.upper())
             except ValueError:
-                self.current_compound = TyreCompound.UNKNOWN
+                target_cmp = TyreCompound.UNKNOWN
         else:
-            self.current_compound = compound
-        self.tyre_age_laps = tyre_age_at_start
+            target_cmp = compound
+
+        is_compound_change = (target_cmp != self.current_compound and self.current_compound != TyreCompound.UNKNOWN)
+        self.current_compound = target_cmp
+
+        if tyre_age_at_start is not None:
+            self.tyre_age_laps = tyre_age_at_start
+        elif is_compound_change:
+            self.tyre_age_laps = 0
 
     def increment_tyre_age(self) -> None:
         self.tyre_age_laps += 1
