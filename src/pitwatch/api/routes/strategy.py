@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Request
 from pitwatch.strategy.pirelli import CircuitStrategyConfig
 from pitwatch.strategy.engine import ThreatMatrixResponse
+from pitwatch.intelligence.pace import PaceMonitorResponse
 
 router = APIRouter(prefix="/v1/strategy", tags=["strategy"])
 
@@ -15,3 +16,9 @@ async def get_threat_matrix(request: Request):
 async def get_strategy_presets(request: Request):
     state = request.app.state.session_state
     return state.strategy_engine.strategy_config
+
+
+@router.get("/pace-monitor", response_model=PaceMonitorResponse)
+async def get_pace_monitor(request: Request):
+    state = request.app.state.session_state
+    return state.get_pace_monitor()

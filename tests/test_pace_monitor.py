@@ -250,3 +250,30 @@ def test_session_state_pace_monitor():
     assert nor_status.trend == PaceTrend.STABLE
 
 
+def test_api_pace_monitor():
+    from fastapi.testclient import TestClient
+    from pitwatch.api.app import create_app
+    from pitwatch.state.session import LiveSessionState
+
+    state = LiveSessionState(session_key=11731, circuit_name="Sepang")
+    state.register_driver(driver_number=1, driver_code="VER")
+    state.register_driver(driver_number=4, driver_code="NOR")
+
+    state.update_timing_line("1", {"NumberOfLaps": 1, "LastLapTime": "1:30.000", "Position": "1", "GapToLeader": "LEADER"})
+    state.update_timing_line("4", {"NumberOfLaps": 1, "LastLapTime": "1:30.500", "Position": "2", "GapToLeader": "+0.500"})
+
+    app = create_app(session_state=state)
+    client = TestClient(app)
+
+    resp = client.get("/v1/strategy/pace-monitor")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["session_key"] == 11731
+    assert "drivers" in data
+    assert len(data["drivers"]) == 2
+    assert data["drivers"][0]["driver_code"] == "VER"
+    assert "trend" in data["drivers"][0]
+    assert "trend_color" in data["drivers"][0]
+
+
+
