@@ -11,6 +11,8 @@ from pitwatch.strategy.engine import (
     UndercutThreatLevel,
     UndercutAssessment,
     RejoinClearance,
+    PitRejoinSimulation,
+    simulate_pit_rejoin,
     CompetitorThreatSnapshot,
     ThreatMatrixResponse,
 )
@@ -27,6 +29,8 @@ __all__ = [
     "UndercutThreatLevel",
     "UndercutAssessment",
     "RejoinClearance",
+    "PitRejoinSimulation",
+    "simulate_pit_rejoin",
     "CompetitorThreatSnapshot",
     "ThreatMatrixResponse",
 ]

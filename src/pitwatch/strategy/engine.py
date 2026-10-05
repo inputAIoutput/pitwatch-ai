@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence, Union
 from pydantic import BaseModel
 from pitwatch.strategy.circuits import get_circuit_pit_loss
 from pitwatch.strategy.degradation import TyreDegradationModel
@@ -27,6 +27,24 @@ class RejoinClearance(BaseModel):
     rejoin_ahead: bool
 
 
+class PitRejoinSimulation(BaseModel):
+    pit_loss_seconds: float
+    projected_gap_to_leader: float
+    projected_position: int
+    rejoin_behind_driver: Optional[int] = None
+    rejoin_behind_code: Optional[str] = None
+    gap_ahead: Optional[float] = None
+    rejoin_ahead_of_driver: Optional[int] = None
+    rejoin_ahead_of_code: Optional[str] = None
+    margin_behind: Optional[float] = None
+    in_traffic: bool = False
+    clean_air_window_seconds: float = 0.0
+    # Backward-compatibility fields with RejoinClearance
+    gap_to_rejoin_car: float = 0.0
+    net_margin_seconds: float = 0.0
+    rejoin_ahead: bool = True
+
+
 class CompetitorThreatSnapshot(BaseModel):
     driver_number: int
     driver_code: str
@@ -36,7 +54,8 @@ class CompetitorThreatSnapshot(BaseModel):
     tyre_compound: str
     tyre_age_laps: int
     undercut_threat: Optional[UndercutAssessment] = None
-    pit_window_clearance: RejoinClearance
+    pit_rejoin: Optional[PitRejoinSimulation] = None
+    pit_window_clearance: Union[PitRejoinSimulation, RejoinClearance]
 
 
 class ThreatMatrixResponse(BaseModel):
@@ -110,3 +129,107 @@ class DeterministicStrategyEngine:
             net_margin_seconds=margin,
             rejoin_ahead=margin > 0.0,
         )
+
+    def simulate_pit_rejoin(
+        self,
+        driver_number: int,
+        current_gap_to_leader: float,
+        running_order: Sequence[Any],
+        pit_transit_loss: Optional[float] = None,
+    ) -> PitRejoinSimulation:
+        """Calculates projected rejoin gap, position, neighbors, and traffic threat window."""
+        loss = pit_transit_loss if pit_transit_loss is not None else self.pit_loss
+        return simulate_pit_rejoin(
+            driver_number=driver_number,
+            current_gap_to_leader=current_gap_to_leader,
+            pit_transit_loss=loss,
+            running_order=running_order,
+        )
+
+
+def simulate_pit_rejoin(
+    driver_number: int,
+    current_gap_to_leader: float,
+    pit_transit_loss: float,
+    running_order: Sequence[Any],
+) -> PitRejoinSimulation:
+    """Calculates projected pit exit position, gap to leader, surrounding competitors, and traffic status.
+
+    Args:
+        driver_number: The car number of the driver making the simulated pit stop.
+        current_gap_to_leader: Current gap to race leader in seconds (0.0 for leader).
+        pit_transit_loss: Pit lane delta loss in seconds for this circuit.
+        running_order: Collection of competitors (dicts or objects with driver_number/gap_to_leader).
+
+    Returns:
+        PitRejoinSimulation with projected position, neighbors, clean air window, and traffic flags.
+    """
+    competitors = []
+    for item in running_order:
+        if isinstance(item, dict):
+            num = item.get("driver_number")
+            code = item.get("driver_code") or item.get("name_acronym")
+            gap = float(item.get("gap_to_leader", 0.0))
+        else:
+            num = getattr(item, "driver_number", None)
+            code = getattr(item, "driver_code", getattr(item, "name_acronym", None))
+            gap = float(getattr(item, "gap_to_leader", 0.0))
+
+        if num is None or int(num) == int(driver_number):
+            continue
+        competitors.append({
+            "driver_number": int(num),
+            "driver_code": str(code) if code else None,
+            "gap_to_leader": gap,
+        })
+
+    competitors.sort(key=lambda c: c["gap_to_leader"])
+
+    projected_gap = round(float(current_gap_to_leader) + float(pit_transit_loss), 3)
+
+    ahead_cars = [c for c in competitors if c["gap_to_leader"] < projected_gap]
+    behind_cars = [c for c in competitors if c["gap_to_leader"] >= projected_gap]
+
+    projected_pos = len(ahead_cars) + 1
+
+    rejoin_behind_driver = None
+    rejoin_behind_code = None
+    gap_ahead = None
+    if ahead_cars:
+        car_ahead = ahead_cars[-1]
+        rejoin_behind_driver = car_ahead["driver_number"]
+        rejoin_behind_code = car_ahead["driver_code"]
+        gap_ahead = round(projected_gap - car_ahead["gap_to_leader"], 2)
+
+    rejoin_ahead_of_driver = None
+    rejoin_ahead_of_code = None
+    margin_behind = None
+    if behind_cars:
+        car_behind = behind_cars[0]
+        rejoin_ahead_of_driver = car_behind["driver_number"]
+        rejoin_ahead_of_code = car_behind["driver_code"]
+        margin_behind = round(car_behind["gap_to_leader"] - projected_gap, 2)
+
+    in_traffic = bool(gap_ahead is not None and gap_ahead < 1.2)
+    clean_air_window = round(gap_ahead, 2) if gap_ahead is not None else 99.0
+
+    compat_gap_to_rejoin = gap_ahead if gap_ahead is not None else 0.0
+    compat_net_margin = margin_behind if margin_behind is not None else (gap_ahead if gap_ahead is not None else 0.0)
+    rejoin_ahead = bool(projected_pos == 1 or margin_behind is not None)
+
+    return PitRejoinSimulation(
+        pit_loss_seconds=round(float(pit_transit_loss), 2),
+        projected_gap_to_leader=projected_gap,
+        projected_position=projected_pos,
+        rejoin_behind_driver=rejoin_behind_driver,
+        rejoin_behind_code=rejoin_behind_code,
+        gap_ahead=gap_ahead,
+        rejoin_ahead_of_driver=rejoin_ahead_of_driver,
+        rejoin_ahead_of_code=rejoin_ahead_of_code,
+        margin_behind=margin_behind,
+        in_traffic=in_traffic,
+        clean_air_window_seconds=clean_air_window,
+        gap_to_rejoin_car=compat_gap_to_rejoin,
+        net_margin_seconds=compat_net_margin,
+        rejoin_ahead=rejoin_ahead,
+    )

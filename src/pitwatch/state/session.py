@@ -1227,6 +1227,16 @@ class LiveSessionState:
         competitors = []
         track_temp = self.weather.track_temperature if self.weather else 32.0
 
+        # Build running order for pit rejoin simulation
+        running_order = [
+            {
+                "driver_number": drv.driver_number,
+                "driver_code": drv.driver_code,
+                "gap_to_leader": gap_to_leader,
+            }
+            for drv, pos, interval_ahead, gap_to_leader in ordered
+        ]
+
         for i, (drv, pos, interval_ahead, gap_to_leader) in enumerate(ordered):
             threat = None
             if i < len(ordered) - 1:
@@ -1239,8 +1249,10 @@ class LiveSessionState:
                     track_temperature=track_temp,
                 ).model_dump()
 
-            clearance = self.strategy_engine.calculate_rejoin_clearance(
-                gap_to_rejoin_car=gap_to_leader + 25.0
+            rejoin_sim = self.strategy_engine.simulate_pit_rejoin(
+                driver_number=drv.driver_number,
+                current_gap_to_leader=gap_to_leader,
+                running_order=running_order,
             ).model_dump()
 
             competitors.append({
@@ -1252,7 +1264,8 @@ class LiveSessionState:
                 "tyre_compound": drv.current_compound.value,
                 "tyre_age_laps": drv.tyre_age_laps,
                 "undercut_threat": threat,
-                "pit_window_clearance": clearance,
+                "pit_rejoin": rejoin_sim,
+                "pit_window_clearance": rejoin_sim,
             })
 
         curr_lap = max((d.current_lap for d in self.drivers.values()), default=1)

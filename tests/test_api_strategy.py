@@ -38,3 +38,15 @@ def test_get_strategy_threat_matrix_endpoint(strategy_client):
     assert data["pit_transit_loss_seconds"] == 22.0
     assert "competitors" in data
     assert len(data["competitors"]) == 2
+
+    # Check pit_rejoin simulation output
+    for comp in data["competitors"]:
+        assert "pit_rejoin" in comp and comp["pit_rejoin"] is not None
+        rejoin = comp["pit_rejoin"]
+        assert "projected_gap_to_leader" in rejoin
+        assert "projected_position" in rejoin
+        assert "in_traffic" in rejoin
+        assert "clean_air_window_seconds" in rejoin
+        # Backward compatibility clearance check
+        assert "pit_window_clearance" in comp
+        assert "net_margin_seconds" in comp["pit_window_clearance"]

@@ -10,6 +10,16 @@ def test_sepang_pit_loss_lookup():
     assert get_circuit_pit_loss("Sepang International Circuit") == 22.5
 
 
+def test_f1_calendar_pit_losses():
+    assert get_circuit_pit_loss("Bahrain") == 23.0
+    assert get_circuit_pit_loss("Silverstone") == 21.5
+    assert get_circuit_pit_loss("Monaco") == 19.5
+    assert get_circuit_pit_loss("Marina Bay") == 28.0
+    assert get_circuit_pit_loss("Circuit of the Americas") == 21.0
+    assert get_circuit_pit_loss("Albert Park") == 20.0
+    assert get_circuit_pit_loss("Unknown Track") == 22.0
+
+
 def test_sepang_coordinate_bounds():
     norm = CoordinateNormalizer.for_circuit("Kuala Lumpur")
     assert "kuala lumpur" in CIRCUIT_PRESETS or "sepang" in CIRCUIT_PRESETS
