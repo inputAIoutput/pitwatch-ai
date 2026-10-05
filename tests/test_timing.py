@@ -20,6 +20,8 @@ def test_format_lap_time():
 def test_format_gap():
     assert format_gap(0.0, position=1) == "LEADER"
     assert format_gap(None, position=1) == "LEADER"
+    assert format_gap(0.0, position=2) == "+0.000"
+    assert format_gap(None, position=20) == "+0.000"
     assert format_gap(2.438, position=2) == "+2.438"
     assert format_gap(0.5, position=3) == "+0.500"
     assert format_gap(61.929, position=5) == "+1:01.929"
@@ -29,9 +31,12 @@ def test_format_gap():
 def test_format_interval():
     assert format_interval(0.0, position=1) == "-"
     assert format_interval(None, position=1) == "-"
+    assert format_interval(0.0, position=2) == "+0.000"
+    assert format_interval(None, position=20) == "+0.000"
     assert format_interval(0.584, position=2) == "+0.584"
     assert format_interval(3.112, position=4) == "+3.112"
     assert format_interval(62.100, position=8) == "+1:02.100"
+
 
 
 def test_fastest_lap_record_model():

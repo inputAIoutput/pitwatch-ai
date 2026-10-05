@@ -25,8 +25,10 @@ def format_lap_time(seconds: Optional[float]) -> Optional[str]:
 
 def format_gap(gap: Optional[float], position: int = 1) -> str:
     """Formats gap to leader as 'LEADER', '+SS.mmm', or '+M:SS.mmm'."""
-    if position == 1 or gap is None or gap <= 0.0:
+    if position == 1:
         return "LEADER"
+    if gap is None or gap <= 0.0:
+        return "+0.000"
     if gap >= 60.0:
         mins = int(gap // 60)
         rem_secs = gap - (mins * 60)
@@ -36,10 +38,13 @@ def format_gap(gap: Optional[float], position: int = 1) -> str:
 
 def format_interval(interval: Optional[float], position: int = 1) -> str:
     """Formats interval to position ahead as '-', '+SS.mmm', or '+M:SS.mmm'."""
-    if position == 1 or interval is None or interval <= 0.0:
+    if position == 1:
         return "-"
+    if interval is None or interval <= 0.0:
+        return "+0.000"
     if interval >= 60.0:
         mins = int(interval // 60)
         rem_secs = interval - (mins * 60)
         return f"+{mins}:{rem_secs:06.3f}"
     return f"+{interval:.3f}"
+

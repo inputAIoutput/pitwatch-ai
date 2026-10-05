@@ -364,6 +364,10 @@ class LiveSessionState:
                 pos_int = int(pos_str)
                 if pos_int > 0:
                     drv.current_position = pos_int
+                    if pos_int == 1:
+                        for other_num, other_drv in self.drivers.items():
+                            if other_num != d_no and other_drv.current_position == 1:
+                                other_drv.current_position = 0
 
         # Check retirement / stopped status
         if data.get("Retired") or data.get("Stopped") or data.get("DNF"):
@@ -377,14 +381,22 @@ class LiveSessionState:
         # Gap to leader
         if "GapToLeader" in data:
             raw_gap = data["GapToLeader"]
-            raw_gap_str = str(raw_gap.get("Value") if isinstance(raw_gap, dict) else raw_gap).upper()
+            raw_gap_str = str(raw_gap.get("Value") if isinstance(raw_gap, dict) else raw_gap).upper().strip()
             if any(k in raw_gap_str for k in ("DNF", "OUT", "STOP", "RETIRED")):
                 drv.is_retired = True
                 drv.status = "retired"
             gap_val = parse_gap_or_interval(raw_gap)
-            if "LEADER" in raw_gap_str or (gap_val == 0.0 and drv.current_position == 1):
+            is_leader_msg = (
+                "LEADER" in raw_gap_str
+                or (raw_gap_str.startswith("LAP ") and not "LAPS" in raw_gap_str)
+                or raw_gap_str == "LAP"
+            )
+            if is_leader_msg or (gap_val == 0.0 and drv.current_position == 1):
                 drv.gap_to_leader = 0.0
                 drv.current_position = 1
+                for other_num, other_drv in self.drivers.items():
+                    if other_num != d_no and other_drv.current_position == 1:
+                        other_drv.current_position = 0
             else:
                 drv.gap_to_leader = gap_val
                 if gap_val > 0.0 and drv.current_position == 1:
@@ -392,8 +404,10 @@ class LiveSessionState:
 
         # Interval to position ahead
         if "IntervalToPositionAhead" in data:
-            inter_val = parse_gap_or_interval(data["IntervalToPositionAhead"])
-            if drv.current_position == 1:
+            raw_int = data["IntervalToPositionAhead"]
+            raw_int_str = str(raw_int.get("Value") if isinstance(raw_int, dict) else raw_int).upper().strip()
+            inter_val = parse_gap_or_interval(raw_int)
+            if drv.current_position == 1 or raw_int_str.startswith("LAP ") or raw_int_str == "LAP":
                 drv.interval_ahead = 0.0
             else:
                 drv.interval_ahead = inter_val
@@ -828,7 +842,9 @@ class LiveSessionState:
                     key=lambda d: (
                         1 if d.is_retired else 0,
                         -d.current_lap,
-                        d.gap_to_leader if d.gap_to_leader > 0.0 else (0.0 if (d.current_position == 1 or d.grid_position == 1) else (d.current_position * 1000.0 if d.current_position > 0 else 9999.0)),
+                        d.gap_to_leader if (d.gap_to_leader > 0.0 or d.current_position == 1) else (
+                            (d.current_position * 100.0 if d.current_position > 0 else 900.0 + d.driver_number)
+                        ),
                         d.current_position if d.current_position > 0 else 999,
                         d.driver_number,
                     ),
@@ -838,7 +854,7 @@ class LiveSessionState:
                     active_drivers,
                     key=lambda d: (
                         1 if d.is_retired else 0,
-                        d.current_position if d.current_position > 0 else 999,
+                        d.current_position if d.current_position > 0 else (d.grid_position if d.grid_position > 0 else 999),
                         -d.current_lap,
                         d.gap_to_leader if d.gap_to_leader > 0 else 0.0,
                         d.driver_number,

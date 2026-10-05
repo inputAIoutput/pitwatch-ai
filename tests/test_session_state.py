@@ -636,6 +636,41 @@ def test_tyre_age_accumulation_across_laps_and_stints():
     assert state.drivers[1].tyre_age_laps == 1
 
 
+def test_leader_lap_indicator_and_non_leader_formatting():
+    state = LiveSessionState(session_key=11731, circuit_name="Sepang")
+    for d in (12, 63, 3, 77):
+        state.register_driver(d)
+
+    # Ingest TimingData where ANT (#12) receives "LAP 7", RUS (#63) receives "+1.108", BOT (#77) has no gap (0.0)
+    state.update_timing_line("12", {"NumberOfLaps": 6, "GapToLeader": "LAP 7", "Position": "1"})
+    state.update_timing_line("63", {"NumberOfLaps": 6, "GapToLeader": "+1.108", "Position": "2"})
+    state.update_timing_line("3", {"NumberOfLaps": 6, "GapToLeader": "+2.500", "Position": "3"})
+    state.update_timing_line("77", {"NumberOfLaps": 5, "GapToLeader": "", "Position": "20"})
+
+    state._recalculate_leaderboard()
+
+    # Verify positions and formatted gaps
+    summary = state.get_session_summary()
+    drivers = {d["driver_number"]: d for d in summary["drivers"]}
+
+    # ANT should be P1 with LEADER
+    assert drivers[12]["current_position"] == 1
+    assert drivers[12]["gap_to_leader"] == 0.0
+    assert drivers[12]["gap_to_leader_formatted"] == "LEADER"
+
+    # RUS should be P2 with +1.108, NOT LEADER
+    assert drivers[63]["current_position"] == 2
+    assert drivers[63]["gap_to_leader"] == 1.108
+    assert drivers[63]["gap_to_leader_formatted"] == "+1.108"
+
+    # BOT should be in back with +0.000, NOT LEADER
+    assert drivers[77]["current_position"] == 20
+    assert drivers[77]["gap_to_leader_formatted"] != "LEADER"
+    assert drivers[77]["gap_to_leader_formatted"] == "+0.000"
+    assert [e.driver_number for e in state.leaderboard] == [12, 63, 3, 77]
+
+
+
 
 
 
