@@ -670,6 +670,90 @@ def test_leader_lap_indicator_and_non_leader_formatting():
     assert [e.driver_number for e in state.leaderboard] == [12, 63, 3, 77]
 
 
+def test_lap2_pit_stop_transition_ant_rus_no_zero_gap():
+    """Verify that during pit stops and lap transitions (like Bahrain Lap 2),
+    drivers entering the pits/pit exit do not have gaps wiped to 0.0 or displayed as LEADER.
+    """
+    state = LiveSessionState(session_key=11731, circuit_name="Bahrain")
+    for d in (81, 5, 18, 27, 3, 44, 12, 63):
+        state.register_driver(d)
+
+    # Lap 1: VER (3) was leading, ANT (12) was P3 at +3.450s, RUS (63) was P4 at +4.120s
+    state.update_timing_line("3", {"NumberOfLaps": 1, "GapToLeader": "LEADER", "Position": "1"})
+    state.update_timing_line("12", {"NumberOfLaps": 1, "GapToLeader": "+3.450", "Position": "3"})
+    state.update_timing_line("63", {"NumberOfLaps": 1, "GapToLeader": "+4.120", "Position": "4"})
+    state.update_timing_line("81", {"NumberOfLaps": 1, "GapToLeader": "+5.200", "Position": "5"})
+
+    state._recalculate_leaderboard()
+    assert state.drivers[12].gap_to_leader == 3.450
+    assert state.drivers[12].last_known_gap_to_leader == 3.450
+
+    # End of Lap 1: 81 stays out and crosses to Lap 2 as leader (Gap: LEADER, Pos: 1)
+    # 12 and 63 pit for intermediates; timing packet sends InPit=True and blank GapToLeader
+    state.update_timing_line("81", {"NumberOfLaps": 2, "GapToLeader": "LEADER", "Position": "1"})
+    state.update_timing_line("12", {"NumberOfLaps": 1, "GapToLeader": "", "InPit": True, "Position": "8"})
+    state.update_timing_line("63", {"NumberOfLaps": 1, "GapToLeader": "", "InPit": True, "Position": "10"})
+
+    state._recalculate_leaderboard()
+
+    # ANT (#12) is in P8 and must NOT show 0.0 or LEADER!
+    ant_entry = next(e for e in state.leaderboard if e.driver_number == 12)
+    assert ant_entry.position == 8
+    assert ant_entry.gap_to_leader > 0.0
+    assert ant_entry.gap_to_leader_formatted != "LEADER"
+    assert ant_entry.gap_to_leader_formatted.startswith("+")
+
+    # RUS (#63) is in P10 and must NOT show 0.0 or LEADER!
+    rus_entry = next(e for e in state.leaderboard if e.driver_number == 63)
+    assert rus_entry.position == 10
+    assert rus_entry.gap_to_leader > 0.0
+    assert rus_entry.gap_to_leader_formatted != "LEADER"
+    assert rus_entry.gap_to_leader_formatted.startswith("+")
+
+    # Now ANT crosses Sector 1 on Lap 2: timing sends official gap +24.819
+    state.update_timing_line("12", {"NumberOfLaps": 2, "GapToLeader": "+24.819", "Position": "8"})
+    state._recalculate_leaderboard()
+
+    ant_entry_s1 = next(e for e in state.leaderboard if e.driver_number == 12)
+    assert ant_entry_s1.position == 8
+    assert ant_entry_s1.gap_to_leader == 24.819
+    assert ant_entry_s1.gap_to_leader_formatted == "+24.819"
+
+
+def test_simulate_pit_rejoin_hygiene_with_retired_and_missing_gap_cars():
+    """Verify simulate_pit_rejoin does not treat non-leader 0.0s cars or retired cars as traffic."""
+    from pitwatch.strategy.engine import simulate_pit_rejoin
+
+    # Grid running order with leader (3), car in pit (12), retired car (77), and valid cars
+    running_order = [
+        {"driver_number": 3, "driver_code": "VER", "gap_to_leader": 0.0, "position": 1},
+        {"driver_number": 81, "driver_code": "PIA", "gap_to_leader": 5.0, "position": 2},
+        {"driver_number": 63, "driver_code": "RUS", "gap_to_leader": 15.0, "position": 3},
+        {"driver_number": 44, "driver_code": "HAM", "gap_to_leader": 25.0, "position": 4},
+        # Driver 77 is retired
+        {"driver_number": 77, "driver_code": "BOT", "gap_to_leader": 0.0, "position": 20, "is_retired": True},
+        # Driver 99 has unmeasured 0.0 gap while in position 19
+        {"driver_number": 99, "driver_code": "GIO", "gap_to_leader": 0.0, "position": 19},
+    ]
+
+    # Car 81 (PIA) pits with 21.5s pit loss from gap 5.0s -> projected gap = 26.5s
+    sim = simulate_pit_rejoin(
+        driver_number=81,
+        current_gap_to_leader=5.0,
+        pit_transit_loss=21.5,
+        running_order=running_order,
+    )
+
+    # Ahead of PIA: VER (0.0s), RUS (15.0s), HAM (25.0s) -> 3 cars ahead!
+    # GIO (0.0s at P19) and BOT (retired) must NOT count as traffic ahead!
+    assert sim.projected_position == 4  # Rejoining P4 behind HAM
+    assert sim.rejoin_behind_driver == 44
+    assert sim.rejoin_behind_code == "HAM"
+    assert sim.gap_ahead == 1.5  # 26.5s - 25.0s = 1.5s
+    assert sim.projected_gap_to_leader == 26.5
+
+
+
 
 
 

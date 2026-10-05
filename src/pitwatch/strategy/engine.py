@@ -170,17 +170,29 @@ def simulate_pit_rejoin(
             num = item.get("driver_number")
             code = item.get("driver_code") or item.get("name_acronym")
             gap = float(item.get("gap_to_leader", 0.0))
+            is_retired = bool(item.get("is_retired", False))
+            status = str(item.get("status", "")).lower()
+            pos = int(item.get("position", 0))
         else:
             num = getattr(item, "driver_number", None)
             code = getattr(item, "driver_code", getattr(item, "name_acronym", None))
             gap = float(getattr(item, "gap_to_leader", 0.0))
+            is_retired = bool(getattr(item, "is_retired", False))
+            status = str(getattr(item, "status", "")).lower()
+            pos = int(getattr(item, "position", getattr(item, "current_position", 0)))
 
         if num is None or int(num) == int(driver_number):
             continue
+        if is_retired or status in ("retired", "stopped", "dnf", "out"):
+            continue
+        if gap <= 0.0 and pos > 1:
+            continue
+
         competitors.append({
             "driver_number": int(num),
             "driver_code": str(code) if code else None,
             "gap_to_leader": gap,
+            "position": pos,
         })
 
     competitors.sort(key=lambda c: c["gap_to_leader"])

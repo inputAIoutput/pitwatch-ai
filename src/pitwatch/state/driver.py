@@ -91,7 +91,9 @@ class DriverState:
         self.tyre_age_laps = 0
 
         self.gap_to_leader = 0.0
+        self.last_known_gap_to_leader: Optional[float] = None
         self.interval_ahead = 0.0
+        self.last_known_interval_ahead: Optional[float] = None
         self.last_lap_time: Optional[float] = None
         self.best_lap_time: Optional[float] = None
         self.is_retired: bool = False
